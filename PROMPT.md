@@ -26,10 +26,9 @@ mensajes.js         textos del sargento (archivo aparte, editable a mano)
 firebase-config.js  credenciales (con placeholders para completar)
 manifest.json       PWA
 sw.js               service worker
-icons/              icono 192 y 512
 ```
 
-Ya existentes, no tocar: `rutinas.js`, `img/`, `campana.mp3`.
+Ya existentes, **no los toques ni los regeneres**: `rutinas.js`, `img/`, `campana.mp3`, `icons/`.
 
 ---
 
@@ -256,7 +255,50 @@ Español rioplatense, voseo. Ejemplos del registro buscado: *"Son las 12 y segu�
 
 ## 9. PWA
 
-`manifest.json` con nombre "Mi Entrenador", `display: standalone`, tema negro, iconos 192 y 512.
+### Íconos
+
+La carpeta `icons/` ya viene con todos los archivos hechos. **Usalos tal cual, no generes ni modifiques ninguno:**
+
+```
+icons/icon-1024.png            master
+icons/icon-512.png             manifest, purpose "any"
+icons/icon-192.png             manifest, purpose "any"
+icons/icon-512-maskable.png    manifest, purpose "maskable" (Android)
+icons/icon-192-maskable.png    manifest, purpose "maskable" (Android)
+icons/apple-touch-icon.png     180x180, iOS
+icons/favicon-32.png           pestaña del navegador
+```
+
+`manifest.json` con nombre "Mi Entrenador", `short_name: "Entrenador"`, `display: standalone`, `background_color` y `theme_color` en `#0A0A0B`, `orientation: portrait`, `start_url: "./"`, `scope: "./"`, y el array de íconos con las cuatro entradas y su `purpose` correcto:
+
+```json
+"icons": [
+  { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+  { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+  { "src": "icons/icon-192-maskable.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+  { "src": "icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+]
+```
+
+**iOS ignora por completo los íconos del manifest.** En el `<head>` de `index.html` tienen que ir sí o sí estas etiquetas, o al agregar a pantalla de inicio el iPhone va a mostrar una captura de pantalla en vez del ícono:
+
+```html
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="manifest" href="manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Mi Entrenador">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0A0A0B">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+```
+
+Las rutas van **relativas** (`icons/...`, sin barra inicial), porque la app se sirve desde un subdirectorio de GitHub Pages y con rutas absolutas el ícono no carga.
+
+El service worker tiene que cachear los siete archivos de `icons/` junto con el resto de la app.
+
+Con `viewport-fit=cover` y la barra de estado translúcida, respetá `env(safe-area-inset-*)` en el CSS para que el contenido no quede tapado por el notch ni por la barra inferior del iPhone.
 
 Service worker con cacheo de la aplicación e imágenes para que funcione sin conexión.
 
@@ -288,6 +330,6 @@ Tiene que instalarse bien desde Safari en iPhone y iPad con "Agregar a pantalla 
 1. Todos los archivos de la sección 1, funcionando.
 2. `REGLAS-A-AGREGAR.txt` con solo el bloque de reglas nuevo.
 3. `README.md` con: cómo completar `firebase-config.js`, cómo cambiar la rutina, cómo cambiar los mensajes del sargento y cómo subir cambios a GitHub Pages.
-4. Un repaso final verificando punto por punto la sección 6, que es donde este tipo de app se rompe.
+4. Un repaso final verificando punto por punto la sección 6, que es donde este tipo de app se rompe, y la sección 9, verificando que las siete referencias a `icons/` existan y apunten a archivos reales.
 
 Trabajá de a partes y andá mostrando: primero la estructura y el modelo de datos, después el inicio con la racha, después la sesión de entrenamiento, y al final el resto de las pantallas. Preguntame si algo del spec no cierra en vez de asumir.

@@ -12,11 +12,14 @@ Tiempo total estimado: una hora tuya, más lo que tarde Claude Code en construir
 ```
 C:\Mi Entrenador\
    img\ejercicios\   (20 imágenes .webp)
+   icons\            (7 archivos .png)
    rutinas.js
    campana.mp3
    PROMPT.md
    PASO-A-PASO.md
 ```
+
+Los íconos ya están hechos y en los tamaños correctos. Si después querés cambiarlos por otro diseño, mirá la sección "Cambiar el ícono" al final de este archivo.
 
 3. Abrí `campana.mp3` y escuchala. Si no te gusta cómo suena, decime y te la cambio antes de seguir.
 
@@ -91,7 +94,7 @@ git push
 ## Fase 7 — Instalar en el iPhone y el iPad (10 min)
 
 27. Abrí esa URL **en Safari** (no en Chrome, no desde WhatsApp).
-28. Botón compartir → **Agregar a pantalla de inicio**.
+28. Botón compartir → **Agregar a pantalla de inicio**. Fijate que en la vista previa aparezcan los galones sobre fondo negro. Si ves una captura de pantalla en vez del ícono, falta el `apple-touch-icon` en el `<head>`.
 29. Abrila desde el ícono, no desde Safari. Entrá con tu cuenta de Google.
 30. Repetí en el otro dispositivo.
 31. **Probá la sincronización:** cargá un vaso de agua en el iPhone y fijate que aparezca en el iPad.
@@ -123,3 +126,12 @@ git push
 - **Guarda pero no sincroniza:** las reglas del paso 22 quedaron mal. Revisá que el bloque esté adentro del `match` correcto.
 - **La campana no suena en el iPhone:** verificá que el interruptor de silencio esté desactivado y que hayas tocado "Empezar entrenamiento" antes (ahí se desbloquea el audio).
 - **Mis Finanzas dejó de funcionar:** restaurá el backup de reglas del paso 12 y avisame.
+
+
+---
+
+## Cambiar el ícono más adelante
+
+Si generás otro diseño, **no lo pegues suelto en la carpeta**: hacen falta siete archivos en tamaños distintos, y el de Android necesita margen extra porque el sistema le recorta los bordes en un círculo.
+
+Mandame el PNG de 1024×1024 al chat y te devuelvo los siete archivos listos para reemplazar. No hay que tocar nada de código: los nombres se mantienen.
