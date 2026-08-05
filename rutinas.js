@@ -1,4 +1,4 @@
-/* ============================================================================
+﻿/* ============================================================================
    MI ENTRENADOR — Datos de rutinas
    ----------------------------------------------------------------------------
    Este es el ÚNICO archivo que se toca para cambiar la rutina.
@@ -75,25 +75,25 @@ const INTERVALOS = {
 
   // Ejercicios del bloque "circuito"
   circuito: [
-    { id: "sentadilla-press", orden: 1,
+    { id: "sentadilla-press", orden: 1, grupo: "piernas",
       nombre: "Sentadilla con press",
       reps: 20, peso: 5, unidad: "kg", pesoPaso: 1, material: "mancuerna",
       img: "sentadilla-con-press.webp",
       cues: ["Pecho arriba, rodillas hacia afuera.", "Empujá arriba al subir."] },
 
-    { id: "curl-biceps", orden: 2,
+    { id: "curl-biceps", orden: 2, grupo: "brazos",
       nombre: "Curl de bíceps alternado",
       reps: 20, peso: 5, unidad: "kg", pesoPaso: 1, porLado: true, material: "mancuerna",
       img: "curl-biceps-alternado.webp",
       cues: ["Espalda recta, codo fijo.", "Un brazo por vez, sin balancear."] },
 
-    { id: "elevacion-gemelos", orden: 3,
+    { id: "elevacion-gemelos", orden: 3, grupo: "piernas",
       nombre: "Elevación de gemelos",
       reps: 20, peso: 0, unidad: "kg", pesoPaso: 1, material: "sin carga",
       img: "elevacion-gemelos.webp",
       cues: ["Subí lo más alto posible.", "Pausá 1 seg arriba. Bajá lento."] },
 
-    { id: "patada-triceps", orden: 4,
+    { id: "patada-triceps", orden: 4, grupo: "brazos",
       nombre: "Patada de tríceps",
       reps: 20, peso: 5, unidad: "kg", pesoPaso: 1, porLado: true, material: "mancuerna",
       img: "patada-triceps.webp",
@@ -137,7 +137,7 @@ const MUSCULACION = {
     {
       nombre: "Tren inferior",
       ejercicios: [
-        { id: "prensa-pos1", orden: 1,
+        { id: "prensa-pos1", orden: 1, grupo: "piernas",
           nombre: "Prensa · Posición 1",
           subtitulo: "Cuádriceps",
           series: 4, reps: 12, pesoPaso: 5, pesoSugerido: 60,
@@ -146,7 +146,7 @@ const MUSCULACION = {
           cues: ["Pies bajos y juntos: trabaja el cuádriceps.",
                  "No estires del todo la rodilla arriba. No despegues la cola."] },
 
-        { id: "prensa-pos2", orden: 2,
+        { id: "prensa-pos2", orden: 2, grupo: "piernas",
           nombre: "Prensa · Posición 2",
           subtitulo: "Glúteo e isquios",
           series: 4, reps: 12, pesoPaso: 5, pesoSugerido: 60,
@@ -155,7 +155,7 @@ const MUSCULACION = {
           cues: ["Pies altos y separados: trabaja glúteo e isquios.",
                  "Empujá con el talón, no con la punta del pie."] },
 
-        { id: "extension-cuadriceps", orden: 3,
+        { id: "extension-cuadriceps", orden: 3, grupo: "piernas",
           nombre: "Extensión de cuádriceps",
           series: 4, reps: 12, pesoPaso: 2.5, pesoSugerido: 30,
           pesoNota: "Calibrado el 4/8: 30 kg",
@@ -167,7 +167,7 @@ const MUSCULACION = {
     {
       nombre: "Tren superior",
       ejercicios: [
-        { id: "dorsalera", orden: 4,
+        { id: "dorsalera", orden: 4, grupo: "espalda",
           nombre: "Dorsalera",
           series: 4, reps: 12, pesoPaso: 2.5, pesoSugerido: 38,
           pesoNota: "Calibrado el 4/8: 38 kg (45 fue demasiado)",
@@ -175,7 +175,7 @@ const MUSCULACION = {
           cues: ["Pecho arriba, tirá con los codos, no con las manos.",
                  "No te tires para atrás con el torso."] },
 
-        { id: "press-pecho", orden: 5,
+        { id: "press-pecho", orden: 5, grupo: "pecho",
           nombre: "Press de pecho en máquina",
           series: 4, reps: 12, pesoPaso: 2.5, pesoSugerido: 30,
           pesoNota: "Calibrado el 4/8: 30 kg, con lo justo",
@@ -183,7 +183,7 @@ const MUSCULACION = {
           cues: ["Espalda apoyada en el respaldo todo el movimiento.",
                  "Codos a la altura del pecho, no más arriba."] },
 
-        { id: "remo-sentado", orden: 6,
+        { id: "remo-sentado", orden: 6, grupo: "espalda",
           nombre: "Remo sentado en máquina",
           series: 4, reps: 12, pesoPaso: 2.5, pesoSugerido: 45,
           pesoNota: "Calibrado el 4/8: 45 kg, con lo justo",

@@ -857,12 +857,6 @@ canvas.grafico-mini { width: 100%; height: 130px; background: var(--superficie);
 .interruptor input:checked + i { background: var(--verde); }
 .interruptor input:checked + i::after { transform: translateX(20px); }
 
-/* Grilla de prueba de imágenes */
-.prueba-grilla { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
-.prueba-grilla figure { background: var(--superficie); border: 1px solid var(--separador); border-radius: var(--r-boton); padding: 8px; }
-.prueba-grilla img { height: 80px; object-fit: contain; margin: 0 auto; }
-.prueba-grilla figcaption { font-size: 13px; color: var(--texto2); text-align: center; margin-top: 4px; word-break: break-all; }
-
 /* Calculadora de discos */
 .discos-resultado {
   background: var(--superficie); border: 1px solid var(--separador); border-radius: var(--r-tarjeta);
@@ -950,6 +944,34 @@ body:has(#vista-entreno:not(.oculta)) .barra-descanso {
 .barra-descanso.fin { border-color: var(--verde); }
 .barra-descanso.fin .bd-num, .barra-descanso.fin .bd-etiqueta { color: var(--verde); }
 .barra-descanso.bd-bloque .bd-num { color: var(--rojo); }
+
+/* --- Volumen por grupo muscular -------------------------------------------- */
+.grupos { display: grid; gap: 8px; margin: 8px 0; }
+.grupo-fila { display: flex; align-items: center; gap: 12px; }
+.grupo-nombre {
+  flex: none; width: 72px; font-size: 13px; font-weight: 600;
+  text-transform: capitalize; color: var(--texto2);
+}
+.grupo-barra {
+  flex: 1; height: 12px; border-radius: 999px;
+  background: var(--superficie); overflow: hidden;
+}
+.grupo-barra i {
+  display: block; height: 100%; border-radius: 999px;
+  background: var(--texto);
+  transition: width var(--t-entrada) var(--curva-entrada);
+}
+.grupo-kg {
+  flex: none; min-width: 62px; text-align: right;
+  font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+
+/* --- Bitácora de problemas -------------------------------------------------- */
+.bitacora { display: grid; gap: 8px; margin-top: 12px; max-height: 320px; overflow-y: auto; }
+.bitacora-item {
+  background: var(--superficie); border: 1px solid var(--separador);
+  border-radius: var(--r-boton); padding: 10px 14px; font-size: 14px; line-height: 1.4;
+}
 
 /* --- Banner de sesión en curso: la única barra roja entera ----------------- */
 .barra-sesion {

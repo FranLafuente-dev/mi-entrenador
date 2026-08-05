@@ -98,6 +98,11 @@ function hoyISO() {
 function horaAhora() {
   return Number(_partes(_fmtHoraTZ, new Date()).hour);
 }
+/* El día calendario argentino de un instante cualquiera. */
+function isoDeInstante(ts) {
+  const p = _partes(_fmtDiaTZ, new Date(ts));
+  return `${p.year}-${p.month}-${p.day}`;
+}
 /* "20:00" → 20. Los umbrales del día viven en rutinas.js, no sueltos acá. */
 function horaDe(hhmm, siFalla) {
   const cruda = String(hhmm ?? "").split(":")[0].trim();
@@ -229,6 +234,31 @@ function leerBitacora() {
   catch (_) { return []; }
 }
 function borrarBitacora() { localStorage.removeItem("bitacora"); }
+
+/* Anotar a mano, en dos segundos, sin salir de donde estaba. */
+function hojaAnotarProblema() {
+  const donde = vistaActual;
+  abrirHoja(`
+    <h3>¿Qué pasó?</h3>
+    <p class="texto-2">Una línea alcanza. Queda con la hora y la pantalla
+    (${esc(donde)}) para poder reconstruirlo después.</p>
+    <div class="campo">
+      <textarea id="ap-texto" placeholder="Ej: no sonó la campana del descanso"></textarea>
+    </div>
+    <div class="hoja-acciones">
+      <button id="ap-guardar" class="btn btn-primario btn-grande">Anotar</button>
+    </div>`);
+  setTimeout(() => $("#ap-texto")?.focus(), 250);
+  $("#ap-guardar").onclick = () => {
+    const texto = $("#ap-texto").value.trim();
+    if (!texto) { $("#ap-texto").focus(); return; }
+    anotarProblema(texto, false);
+    cerrarHoja(true);
+    vibrar("confirmar");
+    toast("Anotado.");
+    if (vistaActual === "ajustes") renderAjustes();
+  };
+}
 
 /* --- Vibración: tres patrones y nada más (solo si la API existe) --- */
 const VIBRA = { leve: 10, confirmar: [30, 40, 30], celebrar: [50, 80, 50, 80, 120] };
@@ -4004,6 +4034,11 @@ function hojaDetalleDia(fecha) {
     acciones.push(`<button id="dd-caminata" class="btn btn-borde btn-grande">${reg?.caminata ? "Editar" : "Registrar"} caminata</button>`);
   }
 
+  // El parte de la semana se consulta desde cualquier día de una semana cerrada.
+  if (lunesDe(fecha) < lunesDe(hoy)) {
+    acciones.push(`<button id="dd-parte-semana" class="btn btn-borde btn-grande">Ver el parte de esa semana</button>`);
+  }
+
   /* Feriado y causa mayor se marcan en cualquier día, pasado o futuro, y se
      desmarcan. Bajan el objetivo de esa semana en uno. */
   const esFer = esFeriado(fecha);
@@ -4029,6 +4064,7 @@ function hojaDetalleDia(fecha) {
 
   const on = (id, fn) => { const b = $(`#${id}`); if (b) b.onclick = fn; };
 
+  on("dd-parte-semana", () => hojaParteSemanal(lunesDe(fecha)));
   on("dd-feriado", (ev) => alternarFeriado(fecha, ev.currentTarget));
   on("dd-causa", () => hojaCausaMayor(fecha, escudoDisponible(fecha.slice(0, 7))));
   on("dd-quitar-causa", async (ev) => {
@@ -4450,7 +4486,7 @@ function abrirFicha(fecha, desdeEl) {
       if (caja && snap.exists()) {
         caja.outerHTML = `<img class="dia-foto" src="${snap.data().data}" alt="Foto del día">` +
           (snap.data().hora ? `<div class="foto-hora">${fmtHora(snap.data().hora)}</div>` : "");
-      } else if (caja) caja.textContent = "Sin foto disponible";
+      } else if (caja) caja.textContent = "La foto no está en este dispositivo todavía. Volvé a entrar con conexión.";
     });
   }
 }
@@ -4484,7 +4520,7 @@ function indicadoresDiaHTML(fecha) {
     ${pesaje ? `<div class="dia-detalle-fila"><span>Peso corporal</span>
       <span class="num">${fmtNumero(pesaje.pesoKg, "peso")} kg</span></div>` : ""}
     ${reg?.comentario ? `<p class="mt">${esc(reg.comentario)}</p>`
-      : (registrado ? `<p class="dato mt">Sin comentario.</p>` : "")}`;
+      : (registrado ? `<p class="dato mt">No dejaste comentario. Se puede agregar con "Completar".</p>` : "")}`;
 }
 
 /* ==========================================================================
@@ -4713,6 +4749,104 @@ function progresionDe(id) {
   return puntos;
 }
 
+/* ==========================================================================
+   EL PARTE DEL DOMINGO — el resumen de la semana que se cerró
+   ========================================================================== */
+function hojaParteSemanal(lunes) {
+  const r = resumenSemana(lunes);
+  const domingo = r.domingo;
+  let volumen = 0, agua = 0, diasConAgua = 0;
+  for (let i = 0; i < 7; i++) {
+    const f = sumarDias(lunes, i);
+    const reg = regReal(f);
+    if (reg && sesionRegistrada(f)) volumen += volumenSesion(reg);
+    const ml = S.dias.get(f)?.aguaMl || 0;
+    if (ml) { agua += ml; diasConAgua++; }
+  }
+  const pesajes = pesajesOrdenados().filter((p) => p.fecha >= lunes && p.fecha <= domingo);
+  const peso = pesajes[pesajes.length - 1];
+  const { racha } = calcularRacha();
+
+  const veredicto = r.completa
+    ? (r.mencionHonor ? sargento("mencionHonor") : sargento("yaEntreno", { resumen: "" }))
+    : (r.neutra ? "Semana sin días de entreno. La racha quedó como estaba."
+      : sargento("bajoRango", { rango: rangoSiFalla(racha).nombre }));
+
+  abrirHoja(`
+    <h3>Parte de la semana</h3>
+    <p class="texto-2">Del ${fmtFechaCorta(lunes)} al ${fmtFechaCorta(domingo)}</p>
+    <div class="peso-resumen">
+      <div class="peso-tarjeta"><strong class="num">${r.sesiones}/${r.objetivo}</strong><span>Sesiones</span></div>
+      <div class="peso-tarjeta"><strong class="num">${fmtNumero(volumen, "ml")}</strong><span>kg movidos</span></div>
+      <div class="peso-tarjeta"><strong class="num">${diasConAgua ? fmtLitros(Math.round(agua / diasConAgua)) : "—"}</strong><span>L de agua / día</span></div>
+    </div>
+    <div class="dia-detalle-fila"><span>Días con el agua cumplida</span><span class="num">${r.diasAgua} de 7</span></div>
+    <div class="dia-detalle-fila"><span>Caminatas en descanso</span><span class="num">${r.caminatas}</span></div>
+    ${peso ? `<div class="dia-detalle-fila"><span>Peso</span><span class="num">${fmtNumero(peso.pesoKg, "peso")} kg</span></div>` : ""}
+    ${r.feriados ? `<div class="dia-detalle-fila"><span>Feriados</span><span class="num">${r.feriados}</span></div>` : ""}
+    ${r.causasMayores ? `<div class="dia-detalle-fila"><span>Causa mayor</span><span class="num">${r.causasMayores}</span></div>` : ""}
+    ${r.mencionHonor ? `<div class="dia-detalle-fila"><span>Mención de honor</span><span>🏅 sí</span></div>` : ""}
+    <p class="mt">${esc(veredicto)}</p>`);
+}
+
+/* ==========================================================================
+   VOLUMEN POR GRUPO MUSCULAR — lo que muestra si algo se está descuidando
+   --------------------------------------------------------------------------
+   Cuenta las dos rutinas. Las mancuernas del circuito de lunes y jueves entran
+   con peso × repeticiones, y los `porLado` cuentan doble porque se hacen con
+   los dos brazos (el curl y la patada de tríceps).
+   ========================================================================== */
+const GRUPOS = ["piernas", "espalda", "pecho", "brazos", "hombros"];
+
+function volumenPorGrupo(desde, hasta) {
+  const total = {};
+  for (const f of [...S.dias.keys()].sort()) {
+    if (f < desde || f > hasta) continue;
+    const reg = regReal(f);
+    if (!reg || !sesionRegistrada(f)) continue;
+
+    if (reg.series) {
+      for (const [id, ss] of Object.entries(reg.series)) {
+        const g = ejercicioPorId(id)?.grupo;
+        if (!g) continue;
+        for (const x of ss || []) {
+          if (x?.hecha) total[g] = (total[g] || 0) + (x.peso || 0) * (x.reps || 0);
+        }
+      }
+    }
+    if (reg.rutinaId === "intervalos" && reg.vueltas) {
+      const vueltas = reg.vueltas.reduce((a, b) => a + (b || 0), 0);
+      for (const e of INTERVALOS.circuito) {
+        if (!e.peso || !e.grupo) continue;
+        total[e.grupo] = (total[e.grupo] || 0) +
+          vueltas * e.peso * e.reps * (e.porLado ? 2 : 1);
+      }
+    }
+  }
+  return total;
+}
+
+function barrasPorGrupoHTML(desde, hasta) {
+  const total = volumenPorGrupo(desde, hasta);
+  const max = Math.max(1, ...Object.values(total));
+  const conDatos = GRUPOS.filter((g) => total[g]);
+  if (!conDatos.length) {
+    return `<p class="vacio-direccion">Todavía no hay volumen para repartir.
+      Después de la primera semana esto muestra qué grupo estás descuidando.</p>`;
+  }
+  return `<div class="grupos">
+    ${GRUPOS.map((g) => {
+      const kg = total[g] || 0;
+      return `
+        <div class="grupo-fila">
+          <span class="grupo-nombre">${g}</span>
+          <span class="grupo-barra"><i style="width:${Math.round((kg / max) * 100)}%"></i></span>
+          <span class="grupo-kg num">${fmtNumero(Math.round(kg), "ml")}</span>
+        </div>`;
+    }).join("")}
+  </div>`;
+}
+
 /* Kilos movidos por semana, contando las dos rutinas. */
 function volumenPorSemana() {
   const porSemana = new Map();
@@ -4742,6 +4876,8 @@ function renderHistorial() {
       <div class="peso-tarjeta"><strong class="num">${fmtNumero(Math.round(totalKg / 1000), "ml")}</strong><span>Toneladas</span></div>
       <div class="peso-tarjeta"><strong class="num">${fmtNumero(semanas.length ? Math.round(totalKg / semanas.length) : 0, "ml")}</strong><span>kg / semana</span></div>
     </div>
+    <div class="seccion-titulo">Esta semana, por grupo</div>
+    ${barrasPorGrupoHTML(lunesDe(hoyISO()), domingoDe(hoyISO()))}
     <div class="seccion-titulo">Progresión de carga</div>
     <div class="campo"><select id="hist-ej">
       ${ejercicios.map((e) => `<option value="${e.id}" ${e.id === sel ? "selected" : ""}>${esc(e.nombre)}</option>`).join("")}
@@ -5108,71 +5244,137 @@ async function exportarPDF(tipo) {
 }
 
 /* ==========================================================================
-   AJUSTES — configuración + modo prueba
+   AJUSTES — cuenta, diagnóstico, bitácora y copia de seguridad
    ========================================================================== */
-function imagenesDeRutinas() {
-  const set = new Set();
-  for (const e of INTERVALOS.entradaEnCalor.ejercicios) set.add(e.img);
-  set.add(INTERVALOS.entradaEnCalor.imgResumen);
-  for (const e of INTERVALOS.circuito) set.add(e.img);
-  for (const e of MUSCULACION.entradaEnCalor.ejercicios) set.add(e.img);
-  set.add(MUSCULACION.entradaEnCalor.imgResumen);
-  for (const b of MUSCULACION.bloques) for (const e of b.ejercicios) set.add(e.img);
-  set.add(MUSCULACION.cierre.img);
-  return [...set];
+
+/* ==========================================================================
+   COPIA DE SEGURIDAD — sin las fotos, que pesan demasiado
+   ========================================================================== */
+function exportarCopia() {
+  const copia = {
+    version: 1, exportado: Date.now(), rutinasVersion: RUTINAS_VERSION,
+    config: S.config || {},
+    dias: Object.fromEntries(S.dias),
+    pesajes: Object.fromEntries(S.pesajes),
+    semanas: Object.fromEntries(S.semanas),
+  };
+  const blob = new Blob([JSON.stringify(copia, null, 1)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `mi-entrenador-${hoyISO()}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  toast(`Copia de ${S.dias.size} días descargada.`, "toast-record");
+}
+
+async function importarCopia(file, boton) {
+  let datos;
+  try {
+    datos = JSON.parse(await file.text());
+  } catch (_) {
+    toast("Ese archivo no es una copia válida.", "toast-alerta");
+    return;
+  }
+  if (!datos?.dias || !datos?.config) {
+    toast("Al archivo le faltan los días o la configuración.", "toast-alerta");
+    return;
+  }
+  const nDias = Object.keys(datos.dias).length;
+  abrirHoja(`
+    <h3>¿Importar la copia?</h3>
+    <p class="texto-2">Trae ${nDias} días, ${Object.keys(datos.pesajes || {}).length} pesajes
+    y la configuración. Lo que tengas cargado con las mismas fechas se
+    reemplaza. Las fotos no viajan en la copia y se conservan las actuales.</p>
+    <div class="hoja-acciones">
+      <button id="imp-si" class="btn btn-rojo btn-grande">Importar</button>
+      <button id="imp-no" class="btn btn-borde btn-grande">Cancelar</button>
+    </div>`);
+  $("#imp-no").onclick = () => cerrarHoja(true);
+  $("#imp-si").onclick = async (ev) => {
+    ev.currentTarget.disabled = true;
+    let fallos = 0;
+    for (const [fecha, dia] of Object.entries(datos.dias)) {
+      // La foto es del dispositivo, no de la copia: no se pisa.
+      const { tieneFoto, ...resto } = dia;
+      if (!await guardarDia(fecha, resto, { queHacia: `el día ${fecha}` })) fallos++;
+    }
+    for (const [fecha, p] of Object.entries(datos.pesajes || {})) {
+      const ok = await escribir(`el pesaje ${fecha}`,
+        () => setDoc(refs.pesaje(fecha), p, { merge: true }));
+      if (!ok) fallos++;
+    }
+    for (const [clave, s] of Object.entries(datos.semanas || {})) {
+      await escribir(`la semana ${clave}`, () => setDoc(refs.semana(clave), s, { merge: true }));
+    }
+    const { seedCargada, ...conf } = datos.config;
+    await guardarConfig(conf, { queHacia: "la configuración" });
+    cerrarHoja(true);
+    toast(fallos ? `Importado con ${fallos} errores. Mirá la bitácora.` : "Copia importada.",
+      fallos ? "toast-alerta" : "toast-record", 7000);
+    if (fallos) anotarProblema(`importación con ${fallos} errores`);
+    await procesarSemanasCerradas();
+    refrescarVistaActual();
+  };
 }
 
 function renderAjustes() {
   const cont = $("#ajustes-contenido");
+  const problemas = leerBitacora();
   cont.innerHTML = `
-    <div class="seccion-titulo">Comprobaciones</div>
-    <div class="hoja-acciones" style="margin-top:8px">
-      <button id="cfg-campana" class="btn btn-borde btn-grande">Probar campana</button>
-      <button id="cfg-campana-bloqueo" class="btn btn-borde btn-grande">Probar campana con pantalla apagada</button>
-      <button id="cfg-imagenes" class="btn btn-borde btn-grande">Ver imágenes de ejercicios</button>
-    </div>
-    <p class="dato">La segunda agenda la campana a 15 segundos: tocala, bloqueá el
-    teléfono y esperá. Es la única forma de comprobar si suena en segundo plano.</p>
-    <div id="cfg-grilla-imgs" class="oculta"></div>
-
     <div class="seccion-titulo">Cuenta</div>
     <div class="config-fila"><span>${esc(S.user?.email || "")}</span>
       <button id="cfg-salir" class="btn btn-texto">Cerrar sesión</button></div>
     <div class="config-fila"><span>Diagnóstico de sesión<small>Últimos movimientos del login</small></span>
       <button id="cfg-diag" class="btn btn-texto">Ver</button></div>
     <div id="cfg-diag-caja" class="oculta"></div>
+
+    <div class="seccion-titulo">Bitácora de problemas</div>
+    <p class="dato">Entrenando no vas a poder anotar qué falló. Dejalo acá en dos
+    segundos y después lo vemos.</p>
+    <div class="hoja-acciones" style="margin-top:8px">
+      <button id="cfg-anotar" class="btn btn-borde btn-grande">Anotar un problema</button>
+      ${problemas.length ? `<button id="cfg-bitacora" class="btn btn-borde btn-grande">Ver las ${problemas.length} anotaciones</button>` : ""}
+    </div>
+    <div id="cfg-bitacora-caja" class="oculta"></div>
+
+    <div class="seccion-titulo">Copia de seguridad</div>
+    <p class="dato">Días, pesajes, semanas y configuración. Sin las fotos, que
+    pesan demasiado.</p>
+    <div class="hoja-acciones" style="margin-top:8px">
+      <button id="cfg-exportar" class="btn btn-borde btn-grande">Exportar a un archivo</button>
+      <button id="cfg-importar" class="btn btn-borde btn-grande">Importar desde un archivo</button>
+      <input id="cfg-importar-archivo" type="file" accept="application/json,.json" hidden>
+    </div>
+
     <p class="dato centrado mt">Rutinas v${RUTINAS_VERSION} · fecha de inicio ${fmtFechaCorta(pisoFecha())}
       <br>Día calendario según ${TZ} · hoy es ${hoyISO()}</p>`;
 
-  $("#cfg-campana").onclick = () => { desbloquearAudio(); setTimeout(sonarCampana, 150); };
-  $("#cfg-campana-bloqueo").onclick = async (ev) => {
-    ev.currentTarget.disabled = true;
-    desbloquearAudio();
-    await prepararAudio();
-    const ok = agendarCampana("prueba", Date.now() + 15000);
-    if (!ok) {
-      toast("No se pudo agendar la campana en este dispositivo.", "toast-alerta", 7000);
-      ev.currentTarget.disabled = false;
-      return;
-    }
-    toast("Agendada. Bloqueá el teléfono ahora y esperá 15 segundos.", "", 8000);
-    setTimeout(() => {
-      cancelarCampana("prueba");
-      const b = $("#cfg-campana-bloqueo");
-      if (b) b.disabled = false;
-    }, 17000);
+  $("#cfg-exportar").onclick = () => exportarCopia();
+  $("#cfg-importar").onclick = () => $("#cfg-importar-archivo").click();
+  $("#cfg-importar-archivo").onchange = (ev) => {
+    const f = ev.target.files?.[0];
+    if (f) importarCopia(f);
   };
-  $("#cfg-imagenes").onclick = () => {
-    const g = $("#cfg-grilla-imgs");
-    if (!g.classList.contains("oculta")) { g.classList.add("oculta"); return; }
-    g.innerHTML = `<div class="prueba-grilla">
-      ${imagenesDeRutinas().map((img) => `
-        <figure><img src="img/ejercicios/${img}" alt="${img}"
-          onerror="this.style.outline='2px solid var(--rojo)';this.alt='NO CARGA'">
-        <figcaption>${img}</figcaption></figure>`).join("")}
-    </div>`;
-    g.classList.remove("oculta");
+
+  $("#cfg-anotar").onclick = () => hojaAnotarProblema();
+  const bBit = $("#cfg-bitacora");
+  if (bBit) bBit.onclick = () => {
+    const caja = $("#cfg-bitacora-caja");
+    if (!caja.classList.contains("oculta")) { caja.classList.add("oculta"); return; }
+    caja.innerHTML = `
+      <div class="bitacora">
+        ${problemas.slice().reverse().map((p) => `
+          <div class="bitacora-item">
+            <div class="dato">${fmtFechaCorta(isoDeInstante(p.hora))} ${fmtHora(p.hora)} · ${esc(p.pantalla || "?")}${p.automatico ? " · automático" : ""}</div>
+            <div>${esc(p.texto)}</div>
+          </div>`).join("")}
+      </div>
+      <button id="cfg-bitacora-borrar" class="btn btn-texto" style="width:100%">Borrar todas</button>`;
+    caja.classList.remove("oculta");
+    $("#cfg-bitacora-borrar").onclick = () => { borrarBitacora(); renderAjustes(); };
   };
+
   $("#cfg-diag").onclick = () => {
     const caja = $("#cfg-diag-caja");
     if (!caja.classList.contains("oculta")) { caja.classList.add("oculta"); return; }
