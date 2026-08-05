@@ -16,6 +16,7 @@ const RUTINAS_VERSION = "2026-08";
 const CONFIG = {
   horaEntreno: "10:00",          // hora habitual
   horaAviso: "12:00",            // "todavía no fuiste, ¿a qué hora vas?"
+  horaLimite: "20:00",           // a partir de acá, "la racha está en juego"
   aguaObjetivoMl: 2000,          // 2 botellas de 1 L
   botellaMl: 1000,               // editable desde la app
   vasoMl: 250,                   // editable desde la app

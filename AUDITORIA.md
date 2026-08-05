@@ -12,6 +12,36 @@ No se arregló nada de lo que sigue: es solo el relevamiento.
 
 ---
 
+## Estado al 5 de agosto, después de los bloques A a D
+
+Este documento quedó como el relevamiento original. Lo que ya se resolvió:
+
+| Hallazgo | Dónde se arregló |
+|---|---|
+| 1.1 Foto obligatoria para cerrar | Bloque A — la foto va al principio y no bloquea el cierre |
+| 1.2 Sesión abandonada se evapora | Bloque A — sesión en Firestore, cierre automático, estado `a-medias` |
+| 1.3 Escrituras sin manejo de error | Bloque A — envoltorio `escribir()` con reintento |
+| 1.4 Doble toque | Bloque A — el envoltorio deshabilita el botón |
+| 1.5 Callback único de la hoja | Bloque A — pila de manejadores |
+| 1.7 SDK de Firebase fuera del precache | sigue pendiente |
+| 2.1 Mensajes de récord apagados | Bloque D |
+| 2.2 Claves de `CONFIG` sin leer | Bloque D — las cuatro se leen; se agregó `horaLimite` |
+| 2.3 `filaReg` calculada y descartada | sigue pendiente |
+| 3.1 Agua en dos unidades | Bloque C — totales en litros, porciones en mililitros |
+| 3.2 Tres formatos de kilos | Bloque C — `fmtNumero` única |
+| 3.4 Terminología que baila | sigue pendiente |
+| 3.5 Cinco clases de etiqueta iguales | sigue pendiente |
+| 3.6 Resumen del peso duplicado | sigue pendiente |
+| 4.1 Dos dispositivos se pisan campos | sigue pendiente |
+| 4.2 Foto interrumpida | Bloque A — orden explícito, contenido antes que puntero |
+| 5.1 Descanso persistente | Bloque B — barra flotante y campana agendada |
+| 5.2 Corregir sesión terminada | Bloques A y D — editor con agregar y quitar series |
+| 5.3 Récord al lado del peso | Bloque D |
+| 5.5 Tipos de serie y notas por serie | sigue pendiente |
+| 5.6 e1RM y volumen por músculo | sigue pendiente (sí hay volumen por semana) |
+
+---
+
 ## Lo más importante, en una pantalla
 
 | # | Hallazgo | Gravedad | Costo |

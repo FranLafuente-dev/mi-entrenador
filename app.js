@@ -98,6 +98,13 @@ function hoyISO() {
 function horaAhora() {
   return Number(_partes(_fmtHoraTZ, new Date()).hour);
 }
+/* "20:00" → 20. Los umbrales del día viven en rutinas.js, no sueltos acá. */
+function horaDe(hhmm, siFalla) {
+  const cruda = String(hhmm ?? "").split(":")[0].trim();
+  if (!cruda) return siFalla;               // sin la clave, vale el respaldo
+  const n = Number(cruda);
+  return Number.isFinite(n) && n >= 0 && n <= 23 ? n : siFalla;
+}
 function sumarDias(iso, n) { const d = parseISO(iso); d.setDate(d.getDate() + n); return fmtISO(d); }
 function diaSemanaDe(iso) { return parseISO(iso).getDay(); }
 function lunesDe(iso) {
@@ -725,11 +732,27 @@ function regReal(iso) {
 function esFeriado(iso) {
   return typeof FERIADOS !== "undefined" && FERIADOS.includes(iso);
 }
+/* Los días de descanso salen de CONFIG.diasDescanso y la rutina de cada día de
+   entrenamiento sale de SEMANA. Las dos cosas viven en rutinas.js. */
 function planDelDia(iso) {
   if (esFeriado(iso)) return { tipo: "descanso", feriado: true };
-  const p = SEMANA[diaSemanaDe(iso)];
-  return p ? { ...p } : { tipo: "descanso" };
+  const dow = diaSemanaDe(iso);
+  if ((CONFIG.diasDescanso || []).includes(dow)) return { tipo: "descanso" };
+  const p = SEMANA[dow];
+  return p && p.tipo === "entreno" ? { ...p } : { tipo: "descanso" };
 }
+
+/* Si alguien edita rutinas.js y deja las dos listas peleadas, que se note. */
+(function avisarSiRutinasNoCoinciden() {
+  for (let d = 0; d < 7; d++) {
+    const descansoEnConfig = (CONFIG.diasDescanso || []).includes(d);
+    const descansoEnSemana = (SEMANA[d]?.tipo || "descanso") === "descanso";
+    if (descansoEnConfig !== descansoEnSemana) {
+      console.warn(`rutinas.js: el día ${DIAS_NOMBRE[d]} figura distinto en ` +
+        `CONFIG.diasDescanso y en SEMANA. Manda diasDescanso.`);
+    }
+  }
+})();
 
 /* REGLA DE ORO: si hay foto, hora de inicio, alguna serie marcada o alguna
    vuelta contada, ese día se entrenó. No importa si nunca se tocó "Terminar":
@@ -825,8 +848,22 @@ function rangoDe(racha) {
 function rangoIndice(racha) { return RANGOS.indexOf(rangoDe(racha)); }
 function rangoSiFalla(racha) { return rangoDe(Math.max(0, racha - 1)); }
 function mesDeSemana(lunes) { return domingoDe(lunes).slice(0, 7); }
-function escudoDisponible(mes) {
-  return !(S.config?.escudos && S.config.escudos[mes]);
+/* Los escudos usados en un mes. Las versiones viejas guardaban una sola clave
+   suelta en vez de una lista, así que se acepta cualquiera de las dos formas. */
+function escudosDelMes(mes) {
+  const v = S.config?.escudos?.[mes];
+  if (!v) return [];
+  return Array.isArray(v) ? v : [v];
+}
+function escudosRestantes(mes) {
+  return Math.max(0, (CONFIG.escudosPorMes || 1) - escudosDelMes(mes).length);
+}
+function escudoDisponible(mes) { return escudosRestantes(mes) > 0; }
+/* Devuelve el objeto `escudos` completo con uno más anotado en ese mes. */
+function conEscudoAnotado(mes, clave) {
+  const escudos = { ...(S.config.escudos || {}) };
+  escudos[mes] = [...escudosDelMes(mes), clave];
+  return escudos;
 }
 
 function pendientesDeRecuperar() {
@@ -865,9 +902,7 @@ async function procesarSemanasCerradas() {
           if (escudoDisponible(mes)) {
             const usa = await preguntarEscudo(r);
             if (usa) {
-              const escudos = { ...(S.config.escudos || {}) };
-              escudos[mes] = r.clave;
-              await guardarConfig({ escudos });
+              await guardarConfig({ escudos: conEscudoAnotado(mes, r.clave) });
               const marca = { clave: r.clave, escudo: true, decidida: true };
               S.semanas.set(r.clave, { ...(guardada || {}), ...marca });
               await setDoc(refs.semana(r.clave), marca, { merge: true });
@@ -933,7 +968,8 @@ function preguntarEscudo(r) {
     abrirHoja(`
       <h3>Semana incompleta</h3>
       <p class="texto-2">La semana del ${fmtFechaCorta(r.lunes)} cerró con ${r.sesiones} de
-      ${CONFIG.sesionesPorSemana} sesiones. Tenés un escudo disponible este mes:
+      ${CONFIG.sesionesPorSemana} sesiones. Te queda${escudosRestantes(mesDeSemana(r.lunes)) === 1 ? "" : "n"}
+      ${escudosRestantes(mesDeSemana(r.lunes))} escudo${escudosRestantes(mesDeSemana(r.lunes)) === 1 ? "" : "s"} este mes:
       congela la racha (no baja, pero tampoco sube).</p>
       <div class="hoja-acciones">
         <button id="esc-si" class="btn btn-primario btn-grande">Usar el escudo</button>
@@ -1367,11 +1403,11 @@ function renderInicio() {
     tTitular = pendientes.length ? "Tenés una pendiente" : "Día de descanso";
     tFrase = pendientes.length ? sargento("pendienteRecuperar", vars)
       : (reg?.caminata?.minutos ? sargento("caminataRegistrada", vars) : sargento("descanso", vars));
-  } else if (hora >= 20) {
+  } else if (hora >= horaDe(CONFIG.horaLimite, 20)) {
     tTitular = "La racha está en juego";
     titular.style.color = "var(--rojo)";
     tFrase = racha > 0 ? sargento("rachaEnRiesgo", vars) : sargento("pasoTarde", vars);
-  } else if (hora >= 12) {
+  } else if (hora >= horaDe(CONFIG.horaAviso, 12)) {
     tTitular = `Todavía no fuiste`;
     tFrase = sargento("pasoMediodia", vars);
   } else {
@@ -1404,7 +1440,8 @@ function renderInicio() {
     tEntreno.innerHTML = `
       <div><div class="tarjeta-titulo">Entreno hoy</div>
       <div class="tarjeta-valor">${esc(rutinaHoy.nombre)}</div>
-      <div class="tarjeta-nota">Sacate la foto y ya cuenta</div></div>
+      <div class="tarjeta-nota">${hora < horaDe(CONFIG.horaEntreno, 10)
+        ? `Solés ir ${esc(CONFIG.horaEntreno)}` : "Sacate la foto y ya cuenta"}</div></div>
       <span class="btn btn-rojo btn-medio" style="align-self:stretch;display:flex;align-items:center;justify-content:center">Registrar</span>`;
     tEntreno.onclick = () => abrirRegistroEntrenamiento();
   } else if (pendientes.length) {
@@ -1483,7 +1520,8 @@ function renderRacha(racha, semanaActual) {
   if (!semanaActual.completa && racha > 0 &&
       semanaActual.sesiones + posibles < CONFIG.sesionesPorSemana) {
     alerta = `<div class="racha-alerta">Semana perdida salvo escudo: bajás a ${rangoSiFalla(racha).nombre}</div>`;
-  } else if (!semanaActual.completa && racha > 0 && (dow === 0 || dow >= 5 || hora >= 20)) {
+  } else if (!semanaActual.completa && racha > 0 &&
+      (dow === 0 || dow >= 5 || hora >= horaDe(CONFIG.horaLimite, 20))) {
     alerta = `<div class="racha-alerta">Si fallás bajás a ${rangoSiFalla(racha).nombre}</div>`;
   } else if (semanaActual.escudo) {
     alerta = `<div class="racha-congelada">Semana con escudo: racha congelada</div>`;
@@ -1838,7 +1876,7 @@ function hojaCausaMayor(fecha, hayEscudo) {
     <div class="config-fila" style="border:none">
       <span>Usar el escudo del mes<small>Congela la racha si la semana queda incompleta</small></span>
       <span class="interruptor"><input id="cm-escudo" type="checkbox"><i></i></span>
-    </div>` : `<p class="texto-2">No te queda escudo este mes.</p>`}
+    </div>` : `<p class="texto-2">No te quedan escudos este mes.</p>`}
     <div class="hoja-acciones">
       <button id="cm-guardar" class="btn btn-primario btn-grande">Marcar causa mayor</button>
     </div>`);
@@ -1852,9 +1890,7 @@ function hojaCausaMayor(fecha, hayEscudo) {
       causaMayor: { usada: true, motivo, conEscudo: !!conEscudo },
     });
     if (conEscudo) {
-      const escudos = { ...(S.config.escudos || {}) };
-      escudos[fecha.slice(0, 7)] = claveSemana(fecha);
-      await guardarConfig({ escudos });
+      await guardarConfig({ escudos: conEscudoAnotado(fecha.slice(0, 7), claveSemana(fecha)) });
       toast(sargento("escudoUsado"), "toast-alerta", 6000);
     }
     cerrarHoja(true);
@@ -2708,6 +2744,10 @@ function renderEjercicio(cont, id) {
   if (previa?.esfuerzo === "sobrado") sugerencia = "La vez pasada quedaste sobrado acá. Si querés subir, el número lo ponés vos.";
   if (marcadoAscenso) sugerencia = "Marcaste esta máquina para ascenso. Vos decidís el peso.";
 
+  // El récord ya está calculado al empezar la sesión: mostrarlo es gratis.
+  const record = s.prMax?.[id];
+  const vaARomper = record != null && s.pesoActual[id] > record;
+
   cont.innerHTML = `
     <div class="paso-indicador">Ejercicio ${numEj} de ${totalEj}</div>
     <div class="ej-tarjeta">
@@ -2716,7 +2756,14 @@ function renderEjercicio(cont, id) {
       ${e.subtitulo ? `<div class="ej-sub">${esc(e.subtitulo)} · ${e.series}×${e.reps}</div>`
         : `<div class="ej-sub">${e.series}×${e.reps}</div>`}
       <ul class="ej-cues">${(e.cues || []).map((c) => `<li>${esc(c)}</li>`).join("")}</ul>
-      ${previa ? `<div class="ej-anterior num">La vez pasada: ${previa.peso} kg × ${previa.reps}</div>` : ""}
+      <div class="ej-referencias">
+        ${previa ? `<div class="ej-ref">
+          <span class="ej-ref-etiqueta">La vez pasada</span>
+          <b class="num">${fmtNumero(previa.peso, "carga")} kg × ${previa.reps}</b></div>` : ""}
+        ${record != null ? `<div class="ej-ref ${vaARomper ? "ej-ref-cerca" : ""}">
+          <span class="ej-ref-etiqueta">Tu récord</span>
+          <b class="num">${fmtNumero(record, "carga")} kg</b></div>` : ""}
+      </div>
       ${sugerencia ? `<div class="ej-nota-guardada">${esc(sugerencia)}</div>` : ""}
       ${notaPersistente ? `<div class="ej-nota-guardada">Nota: ${esc(notaPersistente)}</div>` : ""}
 
@@ -2767,6 +2814,9 @@ function renderEjercicio(cont, id) {
     const v = Math.max(0, (leerNumero(inputPeso, "carga") ?? 0) + delta);
     s.pesoActual[id] = Math.round(v * 10) / 10;
     inputPeso.value = fmtNumero(s.pesoActual[id], "carga");
+    // El récord se ilumina apenas el peso elegido lo supera, antes de marcar.
+    cont.querySelector(".ej-ref:last-child")
+      ?.classList.toggle("ej-ref-cerca", record != null && s.pesoActual[id] > record);
     guardarSesion();
   };
   $("#peso-menos").onclick = () => cambiarPeso(-e.pesoPaso);
@@ -2791,7 +2841,9 @@ function renderEjercicio(cont, id) {
         const marcaPrevia = s.prMax[id];
         if (!s.esPrueba && marcaPrevia !== undefined && s.pesoActual[id] > marcaPrevia) {
           s.prMax[id] = s.pesoActual[id];
-          bannerRecord(`Récord en ${e.nombre}: ${s.pesoActual[id]} kg`);
+          bannerRecord(sargento("record", {
+            ejercicio: e.nombre, peso: fmtNumero(s.pesoActual[id], "carga"),
+          }));
         } else if (marcaPrevia === undefined) {
           s.prMax[id] = s.pesoActual[id];
         }
@@ -3387,55 +3439,93 @@ function hojaEditarSeries(fecha) {
   }
 
   const ejercicios = MUSCULACION.bloques.flatMap((b) => b.ejercicios);
-  const filas = ejercicios.map((e) => {
-    const ss = reg.series?.[e.id] || [];
-    if (!ss.length) return "";
-    return `
-      <div class="ed-ejercicio">
-        <div class="ficha-nombre">${esc(e.nombre)}</div>
-        ${ss.map((x, i) => `
-          <div class="ed-serie">
-            <span class="dato">Serie ${i + 1}</span>
-            <input data-ed="${e.id}" data-i="${i}" data-campo="peso" type="text"
-              inputmode="decimal" value="${fmtNumero(x?.peso, "carga")}" aria-label="Peso">
-            <span class="dato">kg ×</span>
-            <input data-ed="${e.id}" data-i="${i}" data-campo="reps" type="text"
-              inputmode="numeric" value="${x?.reps ?? ""}" aria-label="Repeticiones">
-          </div>`).join("")}
+  // Copia de trabajo: se edita acá y recién al guardar se escribe.
+  const series = JSON.parse(JSON.stringify(reg.series || {}));
+
+  const pintar = (primera) => {
+    const filas = ejercicios.map((e) => {
+      const ss = series[e.id] || [];
+      return `
+        <div class="ed-ejercicio">
+          <div class="ficha-nombre">${esc(e.nombre)}</div>
+          ${ss.length ? ss.map((x, i) => `
+            <div class="ed-serie">
+              <span class="dato">Serie ${i + 1}</span>
+              <input data-ed="${e.id}" data-i="${i}" data-campo="peso" type="text"
+                inputmode="decimal" value="${fmtNumero(x?.peso, "carga")}" aria-label="Peso">
+              <span class="dato">kg ×</span>
+              <input data-ed="${e.id}" data-i="${i}" data-campo="reps" type="text"
+                inputmode="numeric" value="${x?.reps ?? ""}" aria-label="Repeticiones">
+              <button class="btn-icono" data-quitar="${e.id}:${i}" aria-label="Quitar esta serie">✕</button>
+            </div>`).join("") : `<p class="dato">Sin series ese día.</p>`}
+          <button class="btn btn-texto" data-sumar="${e.id}">+ Agregar serie</button>
+        </div>`;
+    }).join("");
+
+    const html = `
+      <h3>Corregir series</h3>
+      <p class="texto-2">${esc(fmtFechaLarga(fecha))}. Al guardar se recalculan
+      los récords, el volumen y las estadísticas.</p>
+      ${filas}
+      <div class="hoja-acciones">
+        <button id="ed-guardar" class="btn btn-primario btn-grande">Guardar cambios</button>
       </div>`;
-  }).join("");
+    if (primera) abrirHoja(html); else $("#hoja-contenido").innerHTML = html;
+    enganchar();
+  };
 
-  if (!filas.trim()) {
-    abrirHoja(`<h3>Sin series cargadas</h3>
-      <p class="texto-2">Ese día no tiene series para corregir. Podés cargarlas
-      con "Cargar los pesos que hice".</p>`);
-    return;
-  }
-
-  abrirHoja(`
-    <h3>Corregir series</h3>
-    <p class="texto-2">${esc(fmtFechaLarga(fecha))}. Se recalculan récords y volumen.</p>
-    ${filas}
-    <div class="hoja-acciones">
-      <button id="ed-guardar" class="btn btn-primario btn-grande">Guardar cambios</button>
-    </div>`);
-
-  $("#ed-guardar").onclick = async (ev) => {
-    const series = JSON.parse(JSON.stringify(reg.series || {}));
-    for (const inp of $$("[data-ed]")) {
+  /* Lee lo tipeado a la copia de trabajo, para no perderlo al repintar. */
+  const absorber = () => {
+    for (const inp of $$("#hoja-contenido [data-ed]")) {
       const id = inp.dataset.ed, i = Number(inp.dataset.i);
       if (!series[id]?.[i]) continue;
       const campo = inp.dataset.campo;
       const valor = leerNumero(inp, campo === "reps" ? "ml" : "carga");
       if (valor != null) series[id][i][campo] = valor;
     }
+  };
+
+  const enganchar = () => {
+    $$("#hoja-contenido [data-quitar]").forEach((b) => {
+      b.onclick = () => {
+        absorber();
+        const [id, i] = b.dataset.quitar.split(":");
+        series[id].splice(Number(i), 1);
+        if (!series[id].length) delete series[id];
+        vibrar("leve");
+        pintar(false);
+      };
+    });
+    $$("#hoja-contenido [data-sumar]").forEach((b) => {
+      b.onclick = () => {
+        absorber();
+        const id = b.dataset.sumar;
+        const e = ejercicioPorId(id);
+        const ultima = (series[id] || [])[(series[id] || []).length - 1];
+        series[id] = [...(series[id] || []), {
+          peso: ultima?.peso ?? laVezPasada(id)?.peso ?? e.pesoSugerido ?? 0,
+          reps: ultima?.reps ?? e.reps, hecha: true,
+        }];
+        vibrar("leve");
+        pintar(false);
+      };
+    });
+    $("#ed-guardar").onclick = guardar;
+  };
+
+  const guardar = async (ev) => {
+    absorber();
     const ok = await guardarDia(fecha, { series },
       { queHacia: "las series", boton: ev.currentTarget });
     if (!ok) return;
+    // Si hay una sesión en curso, sus récords quedaron viejos tras la edición.
+    if (S.sesion) S.sesion.prMax = maximosHistoricos();
     cerrarHoja(true);
     refrescarVistaActual();
     toast("Series corregidas.");
   };
+
+  pintar(true);
 }
 
 function hojaRetro(fecha) {
