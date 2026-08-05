@@ -17,7 +17,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
-  doc, collection, setDoc, getDoc, onSnapshot,
+  doc, collection, setDoc, getDoc, onSnapshot, waitForPendingWrites,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 import { firebaseConfig, googleClientId } from "./firebase-config.js";
 
@@ -551,9 +551,19 @@ async function alCambiarDatos() {
 
   const primeraVez = !S.cargado;
   S.cargado = true;
+
+  // Cualquier sesión de un día anterior se cierra sola antes de calcular nada,
+  // así la racha ya la ve como hecha y no como un día colgado.
+  if (primeraVez) await cerrarSesionesViejas();
+
   await procesarSemanasCerradas();
-  if (primeraVez && (vistaActual === "carga" || vistaActual === "login")) irA("inicio", true);
-  else refrescarVistaActual();
+  if (primeraVez && (vistaActual === "carga" || vistaActual === "login")) {
+    irA("inicio", true);
+    // Si retomó una sesión abierta de hoy, se entra directo al entrenamiento.
+    const abierta = diaConSesionAbierta();
+    if (abierta?.fecha === hoyISO() && !S.sesion) toast("Tenés un entrenamiento sin cerrar. Tocá la tarjeta para seguir.", "", 6000);
+    else avisarCierreAutomatico();
+  } else refrescarVistaActual();
 }
 
 async function cargarSemilla() {
@@ -593,14 +603,90 @@ async function cargarSemilla() {
   await setDoc(refs.config, conf, { merge: true });
 }
 
-async function guardarConfig(cambios) {
-  Object.assign(S.config, cambios);
-  await setDoc(refs.config, cambios, { merge: true });
+/* ==========================================================================
+   ESCRITURAS — nunca en silencio, nunca dos veces
+   --------------------------------------------------------------------------
+   Con la caché persistente, `setDoc` resuelve cuando el dato quedó escrito en
+   el TELÉFONO, no cuando el servidor lo confirma. Por eso hay dos niveles:
+
+   - El try/catch atrapa el fallo inmediato (documento inválido, sin refs).
+   - `waitForPendingWrites` avisa cuándo el servidor terminó de aceptar todo
+     lo que había en cola; mientras tanto se muestra "Guardando…".
+
+   Un rechazo del servidor por reglas no rechaza la promesa: Firestore revierte
+   el documento local y el onSnapshot reparte el valor viejo. Por eso el estado
+   local se actualiza DESPUÉS de que la escritura resuelva y nunca antes: si
+   algo se revierte, la pantalla sigue al snapshot y no a una copia optimista.
+   ========================================================================== */
+let syncPendientes = 0;
+
+function pintarSync() {
+  const n = $("#sync-indicador");
+  if (!n) return;
+  n.classList.toggle("oculta", syncPendientes <= 0);
+  // Offline el dato ya está guardado en el teléfono: lo que falta es subirlo.
+  n.textContent = navigator.onLine ? "Guardando…" : "Sin sincronizar";
 }
-async function guardarDia(fecha, cambios) {
-  const previo = S.dias.get(fecha) || {};
-  S.dias.set(fecha, { ...previo, ...cambios, fecha });
-  await setDoc(refs.dia(fecha), { ...cambios, fecha }, { merge: true });
+
+function mostrarFalloEscritura(queHacia, e, reintentar) {
+  const caja = $("#fallo-escritura");
+  if (!caja) return;
+  caja.innerHTML = `<span>No se pudo guardar ${esc(queHacia)}.<small>${esc(e?.code || e?.message || e)}</small></span>`;
+  const btn = el("button", "btn btn-medio", "Reintentar");
+  btn.onclick = async () => {
+    caja.classList.add("oculta");
+    await escribir(queHacia, reintentar);
+  };
+  const cerrar = el("button", "btn-icono", "✕");
+  cerrar.setAttribute("aria-label", "Descartar aviso");
+  cerrar.onclick = () => caja.classList.add("oculta");
+  caja.append(btn, cerrar);
+  caja.classList.remove("oculta");
+  vibrar("confirmar");
+}
+
+/* Envoltorio de toda escritura. `boton` queda deshabilitado mientras dura,
+   que es lo que evita el doble toque. Devuelve true solo si salió bien. */
+async function escribir(queHacia, fn, boton) {
+  if (boton) {
+    if (boton.disabled) return false;      // ya hay una en curso: se ignora
+    boton.disabled = true;
+    boton.classList.add("ocupado");
+  }
+  syncPendientes++;
+  pintarSync();
+  try {
+    await fn();
+    waitForPendingWrites(S.db)
+      .catch(() => { })
+      .then(() => { syncPendientes = Math.max(0, syncPendientes - 1); pintarSync(); });
+    return true;
+  } catch (e) {
+    syncPendientes = Math.max(0, syncPendientes - 1);
+    pintarSync();
+    console.error("escritura fallida:", queHacia, e);
+    mostrarFalloEscritura(queHacia, e, fn);
+    return false;
+  } finally {
+    if (boton) { boton.disabled = false; boton.classList.remove("ocupado"); }
+  }
+}
+
+async function guardarConfig(cambios, opts = {}) {
+  const ok = await escribir(opts.queHacia || "la configuración",
+    () => setDoc(refs.config, cambios, { merge: true }), opts.boton);
+  if (ok) Object.assign(S.config, cambios);
+  return ok;
+}
+
+async function guardarDia(fecha, cambios, opts = {}) {
+  const ok = await escribir(opts.queHacia || "el día",
+    () => setDoc(refs.dia(fecha), { ...cambios, fecha }, { merge: true }), opts.boton);
+  if (ok) {
+    const previo = S.dias.get(fecha) || {};
+    S.dias.set(fecha, { ...previo, ...cambios, fecha });
+  }
+  return ok;
 }
 
 /* ==========================================================================
@@ -625,6 +711,18 @@ function planDelDia(iso) {
   return p ? { ...p } : { tipo: "descanso" };
 }
 
+/* REGLA DE ORO: si hay foto, hora de inicio, alguna serie marcada o alguna
+   vuelta contada, ese día se entrenó. No importa si nunca se tocó "Terminar":
+   un día con evidencia JAMÁS puede leerse como fallado. */
+function tieneEvidencia(reg) {
+  if (!reg) return false;
+  if (reg.tieneFoto || reg.inicio) return true;
+  if (reg.series && Object.values(reg.series)
+    .some((ss) => (ss || []).some((x) => x?.hecha))) return true;
+  if (reg.vueltas && reg.vueltas.some((v) => (v || 0) > 0)) return true;
+  return false;
+}
+
 function estadoDia(iso) {
   if (iso < pisoFecha()) return "previo";      // antes de usar la app: gris neutro
   const reg = regReal(iso);
@@ -636,15 +734,20 @@ function estadoDia(iso) {
     if (reg.estado === "recuperada") return "recuperada";
     if (reg.estado === "causa-mayor") return "causa-mayor";
   }
-  if (plan.tipo === "descanso") {
+  if (plan.tipo === "descanso" && !tieneEvidencia(reg)) {
     return (reg && reg.caminata && reg.caminata.minutos) ? "descanso-caminata" : "descanso";
   }
+  // Entrenó pero el registro quedó a medias (datos viejos, o sesión sin cerrar
+  // de una versión anterior). Cuenta como hecho y se puede completar después.
+  if (tieneEvidencia(reg)) return "a-medias";
   if (iso < hoy) return "fallada";             // el rojo, solo con el día terminado
   return "pendiente";
 }
+
+/* "a-medias" cuenta como sesión: hay evidencia de que entrenó. */
 function sesionRegistrada(iso) {
   const e = estadoDia(iso);
-  return e === "hecha" || e === "recuperada";
+  return e === "hecha" || e === "recuperada" || e === "a-medias";
 }
 
 /* ==========================================================================
@@ -659,7 +762,7 @@ function resumenSemana(lunes) {
   for (const f of dias) {
     const e = estadoDia(f);
     const plan = planDelDia(f);
-    if (e === "hecha") sesiones++;
+    if (e === "hecha" || e === "a-medias") sesiones++;
     else if (e === "recuperada") { sesiones++; recuperadas++; }
     else if (e === "descanso-caminata") caminatas++;
     if (e === "causa-mayor" && regReal(f)?.causaMayor?.conEscudo) causaEscudo = true;
@@ -886,13 +989,27 @@ window.addEventListener("scroll", () => {
 /* ==========================================================================
    HOJA MODAL — sube desde abajo, se cierra arrastrando, escala el fondo
    ========================================================================== */
-let hojaOnCerrar = null;
+/* Pila de manejadores: cada hoja guarda el suyo. Antes era una sola variable
+   global, así que abrir una hoja encima de otra se tragaba el manejador de la
+   de abajo y podía dejar una promesa sin resolver para siempre (eso colgaba el
+   arranque cuando aparecía el diálogo del escudo).
+
+   Visualmente las hojas se reemplazan, no se apilan: no hay dos hojas a la vez.
+   Por eso al abrir una nueva se cierra la anterior EN ORDEN, corriendo su
+   manejador. Así ninguna queda esperando una respuesta que no va a llegar. */
+const pilaHojas = [];
 let hojaAbierta = false;
+
+function correrManejador(entrada) {
+  if (!entrada?.onCerrar) return;
+  try { entrada.onCerrar(); } catch (e) { console.error("manejador de hoja:", e); }
+}
 
 function abrirHoja(html, opts = {}) {
   const hoja = $("#hoja");
+  while (pilaHojas.length) correrManejador(pilaHojas.pop());
   $("#hoja-contenido").innerHTML = html;
-  hojaOnCerrar = opts.onCerrar || null;
+  pilaHojas.push({ onCerrar: opts.onCerrar || null });
   hoja.classList.remove("oculta");
   $("#velo").classList.remove("oculta");
   hoja.scrollTop = 0;
@@ -927,11 +1044,11 @@ function cerrarHoja(silencioso) {
   $("#velo").classList.remove("visible");
   $("#lienzo").classList.remove("atras");
   hojaAbierta = false;
-  const cb = hojaOnCerrar; hojaOnCerrar = null;
+  const entrada = pilaHojas.pop() || null;
   setTimeout(() => {
     if (!hojaAbierta) { hoja.classList.add("oculta"); $("#velo").classList.add("oculta"); }
   }, movReducido() ? 0 : 300);
-  if (!silencioso && cb) cb();
+  if (!silencioso) correrManejador(entrada);
 }
 $("#velo").addEventListener("click", () => cerrarHoja());
 
@@ -1140,8 +1257,10 @@ function renderInicio() {
   const { racha, semanaActual } = calcularRacha();
   const pendientes = pendientesDeRecuperar();
   const rutinaHoy = plan.tipo === "entreno" ? RUTINAS[plan.rutina] : null;
-  const entrenado = estado === "hecha" || estado === "recuperada";
-  const sesionAbierta = sesionGuardadaHoy();
+  const entrenado = sesionRegistrada(hoy);
+  const abierta = diaConSesionAbierta();
+  const sesionAbierta = abierta?.fecha === hoy ? abierta : null;
+  const sinFoto = entrenado && !reg?.tieneFoto;
 
   $("#inicio-fecha").textContent = fmtFechaLarga(hoy);
   $("#inicio-mini-titulo").textContent = fmtFechaLarga(hoy);
@@ -1189,34 +1308,36 @@ function renderInicio() {
 
   /* --- Tarjeta "Entreno hoy" --- */
   const tEntreno = $("#tarjeta-entreno");
-  if (entrenado) {
-    tEntreno.innerHTML = `
-      <div><div class="tarjeta-titulo">Entreno hoy</div>
-      <div class="tarjeta-valor">Completado</div>
-      <div class="tarjeta-nota">${esc(resumenCortoSesion(reg))}</div></div>
-      <div class="tarjeta-estado">✅</div>`;
-    tEntreno.onclick = () => abrirFicha(hoy, tEntreno);
-  } else if (sesionAbierta) {
+  if (sesionAbierta) {
     tEntreno.innerHTML = `
       <div><div class="tarjeta-titulo">Entreno hoy</div>
       <div class="tarjeta-valor">En curso</div>
-      <div class="tarjeta-nota">Tocá para continuar donde estabas</div></div>
+      <div class="tarjeta-nota">Ya cuenta. Tocá para continuar donde estabas.</div></div>
       <div class="tarjeta-estado">💪</div>`;
-    tEntreno.onclick = () => reanudarSesion();
+    tEntreno.onclick = () => retomarSesion(hoy);
+  } else if (entrenado) {
+    tEntreno.innerHTML = `
+      <div><div class="tarjeta-titulo">Entreno hoy</div>
+      <div class="tarjeta-valor">Completado</div>
+      <div class="tarjeta-nota">${esc(resumenCortoSesion(reg))}${sinFoto ? " · falta la foto" : ""}</div></div>
+      <div class="tarjeta-estado">${sinFoto ? "✳️" : "✅"}</div>`;
+    tEntreno.onclick = () => abrirFicha(hoy, tEntreno);
   } else if (plan.tipo === "entreno" && estado !== "causa-mayor") {
     tEntreno.innerHTML = `
       <div><div class="tarjeta-titulo">Entreno hoy</div>
       <div class="tarjeta-valor">${esc(rutinaHoy.nombre)}</div>
-      <div class="tarjeta-nota">Tocá para empezar</div></div>
-      <span class="btn btn-rojo btn-medio" style="align-self:stretch;display:flex;align-items:center;justify-content:center">Empezar</span>`;
-    tEntreno.onclick = () => empezarSesion(plan.rutina, false);
+      <div class="tarjeta-nota">Sacate la foto y ya cuenta</div></div>
+      <span class="btn btn-rojo btn-medio" style="align-self:stretch;display:flex;align-items:center;justify-content:center">Registrar</span>`;
+    tEntreno.onclick = () => abrirRegistroEntrenamiento();
   } else if (pendientes.length) {
     tEntreno.innerHTML = `
       <div><div class="tarjeta-titulo">Entreno hoy</div>
       <div class="tarjeta-valor">Recuperar ${esc(RUTINAS[pendientes[0].rutinaId].nombre)}</div>
       <div class="tarjeta-nota">Hasta el domingo estás a tiempo</div></div>
       <div class="tarjeta-estado">🔥</div>`;
-    tEntreno.onclick = () => empezarSesion(pendientes[0].rutinaId, true, pendientes[0].fecha);
+    tEntreno.onclick = () => abrirRegistroEntrenamiento({
+      rutinaId: pendientes[0].rutinaId, esRecuperacion: true, fechaOriginal: pendientes[0].fecha,
+    });
   } else {
     tEntreno.innerHTML = `
       <div><div class="tarjeta-titulo">Entreno hoy</div>
@@ -1404,17 +1525,32 @@ function hojaMas() {
   const plan = planDelDia(hoy);
   const entrenado = sesionRegistrada(hoy);
   const pendientes = pendientesDeRecuperar();
-  const abierta = sesionGuardadaHoy();
+  const abierta = diaConSesionAbierta();
   const items = [];
 
   const esDescanso = plan.tipo === "descanso";
   const caminata = { id: "mas-caminata", titulo: "Registrar caminata", dato: esDescanso ? "Suma para la mención de honor" : "" };
   if (esDescanso) items.push(caminata);
-  if (!entrenado) {
-    if (abierta) items.push({ id: "mas-continuar", titulo: "Continuar entrenamiento", dato: "Retoma donde estabas" });
-    else if (plan.tipo === "entreno") items.push({ id: "mas-entrenar", titulo: "Empezar entrenamiento", dato: RUTINAS[plan.rutina].nombre });
-    else if (pendientes.length) items.push({ id: "mas-recuperar", titulo: `Recuperar ${RUTINAS[pendientes[0].rutinaId].nombre}`, dato: "Hasta el domingo" });
+
+  if (abierta) {
+    items.push({
+      id: "mas-continuar", titulo: "Continuar entrenamiento",
+      dato: abierta.fecha === hoy ? "Retoma donde estabas" : `Quedó abierto el ${fmtFechaCorta(abierta.fecha)}`,
+    });
+  } else if (!entrenado && plan.tipo === "entreno") {
+    items.push({ id: "mas-entrenar", titulo: "Registrar entrenamiento con foto", dato: RUTINAS[plan.rutina].nombre });
+  } else if (!entrenado && pendientes.length) {
+    items.push({ id: "mas-recuperar", titulo: `Recuperar ${RUTINAS[pendientes[0].rutinaId].nombre}`, dato: "Hasta el domingo" });
+  } else if (!entrenado) {
+    items.push({ id: "mas-entrenar", titulo: "Registrar entrenamiento con foto", dato: "Hoy tocaba descanso" });
+  } else {
+    // Ya entrenó y quiere entrenar igual: adelantar la sesión de mañana.
+    items.push({ id: "mas-igual", titulo: "Entrenar igual", dato: "Se suma al día de hoy" });
   }
+  if (entrenado && !S.dias.get(hoy)?.tieneFoto) {
+    items.push({ id: "mas-foto", titulo: "Agregar la foto de hoy", dato: "El día quedó sin foto" });
+  }
+
   items.push({ id: "mas-agua", titulo: "Registrar agua" });
   if (!esDescanso) items.push(caminata);
   items.push({ id: "mas-peso", titulo: "Registrar peso" });
@@ -1427,9 +1563,13 @@ function hojaMas() {
     </div>`);
 
   const on = (id, fn) => { const b = $(`#${id}`); if (b) b.onclick = () => { cerrarHoja(true); fn(); }; };
-  on("mas-entrenar", () => empezarSesion(plan.rutina, false));
-  on("mas-continuar", () => reanudarSesion());
-  on("mas-recuperar", () => empezarSesion(pendientes[0].rutinaId, true, pendientes[0].fecha));
+  on("mas-entrenar", () => abrirRegistroEntrenamiento());
+  on("mas-continuar", () => abrirRegistroEntrenamiento());
+  on("mas-igual", () => abrirRegistroEntrenamiento({ forzarNueva: true }));
+  on("mas-foto", () => hojaAgregarFoto(hoy));
+  on("mas-recuperar", () => abrirRegistroEntrenamiento({
+    rutinaId: pendientes[0].rutinaId, esRecuperacion: true, fechaOriginal: pendientes[0].fecha,
+  }));
   on("mas-agua", () => hojaAgua());
   on("mas-caminata", () => hojaCaminata());
   on("mas-peso", () => hojaPesaje());
@@ -1622,7 +1762,7 @@ function tickTimers(alVolver) {
     if (resta <= 0 && !t.sono) {
       t.sono = true;
       sonarCampana();
-      guardarSesionLocal();
+      guardarSesion();
     }
     const nodo = $(`#t-${clave}`);
     if (nodo) {
@@ -1633,7 +1773,7 @@ function tickTimers(alVolver) {
       nodo.classList.toggle("fin", resta <= 0);
       nodo.classList.toggle("late", resta > 0 && resta <= 3);
     }
-    if (clave === "descanso" && resta <= -30) { s.descanso = null; guardarSesionLocal(); renderPasoSesion(); }
+    if (clave === "descanso" && resta <= -30) { s.descanso = null; guardarSesion(); renderPasoSesion(); }
   }
   const reloj = $("#entreno-reloj");
   if (reloj && s.inicio) reloj.textContent = fmtCrono((ahora - s.inicio) / 1000);
@@ -1642,27 +1782,75 @@ function tickTimers(alVolver) {
 function ponerTimer(seg, etiqueta) {
   const dur = durT(seg);
   S.sesion.timer = { fin: Date.now() + dur * 1000, dur, etiqueta, sono: false };
-  guardarSesionLocal();
+  guardarSesion();
   renderPasoSesion();
 }
 function ponerDescanso() {
   const dur = durT(S.config.descansoSeg || 90);
   S.sesion.descanso = { fin: Date.now() + dur * 1000, dur, sono: false };
-  guardarSesionLocal();
+  guardarSesion();
 }
 
 /* ==========================================================================
    SESIÓN — armado, persistencia, reanudación
    ========================================================================== */
-function guardarSesionLocal() {
-  try { localStorage.setItem("sesionActiva", JSON.stringify(S.sesion)); } catch (_) { }
-}
+/* La sesión en curso vive en FIRESTORE, dentro del documento del día, para que
+   se pueda retomar desde cualquier dispositivo y en cualquier momento.
+   localStorage queda solo como caché de arranque rápido. */
 function limpiarSesionLocal() { localStorage.removeItem("sesionActiva"); }
-function sesionGuardadaHoy() {
+
+/* Lo que se persiste de la sesión. `cola` y `prMax` no van: se regeneran. */
+function sesionParaGuardar(s) {
+  return {
+    abierta: true, rutinaId: s.rutinaId, fecha: s.fecha,
+    esRecuperacion: !!s.esRecuperacion, fechaOriginal: s.fechaOriginal || null,
+    esPrueba: !!s.esPrueba, inicio: s.inicio, paso: s.paso,
+    calorHecho: s.calorHecho || {}, pesoActual: s.pesoActual || {},
+    repsActual: s.repsActual || {}, tocada: Date.now(),
+  };
+}
+
+/* Autoguardado: cada cambio del estado de la sesión, no solo al marcar serie.
+   Se agrupa a 1,2 s para no escribir en cada toque del botón de peso. */
+let guardarSesionTimer = null;
+function guardarSesion({ yaMismo = false } = {}) {
   try {
-    const s = JSON.parse(localStorage.getItem("sesionActiva") || "null");
-    return s && s.fecha === hoyISO() ? s : null;
-  } catch (_) { return null; }
+    if (S.sesion) localStorage.setItem("sesionActiva", JSON.stringify(S.sesion));
+    else localStorage.removeItem("sesionActiva");
+  } catch (_) { }
+  if (!S.sesion || !refs) return;
+  clearTimeout(guardarSesionTimer);
+  const escribirla = () => {
+    if (!S.sesion) return;
+    guardarDia(S.sesion.fecha, { sesion: sesionParaGuardar(S.sesion) },
+      { queHacia: "el avance del entrenamiento" });
+  };
+  if (yaMismo) escribirla();
+  else guardarSesionTimer = setTimeout(escribirla, 1200);
+}
+
+/* Cualquier día con una sesión abierta, sin importar la fecha. */
+function diaConSesionAbierta() {
+  for (const [fecha, reg] of S.dias) {
+    if (reg?.sesion?.abierta) return { fecha, reg };
+  }
+  return null;
+}
+
+/* Rehidrata una sesión guardada en Firestore a la forma que usa la app. */
+function sesionDesdeRegistro(fecha, reg) {
+  const g = reg.sesion;
+  return {
+    fecha, rutinaId: g.rutinaId,
+    esRecuperacion: !!g.esRecuperacion, fechaOriginal: g.fechaOriginal || null,
+    esPrueba: !!g.esPrueba, inicio: g.inicio, paso: g.paso || 0,
+    cola: armarCola(g.rutinaId),
+    calorHecho: g.calorHecho || {}, pesoActual: g.pesoActual || {},
+    repsActual: g.repsActual || {},
+    vueltas: reg.vueltas || (g.rutinaId === "intervalos" ? [0, 0, 0, 0] : null),
+    timer: null, descanso: null,
+    prMax: maximosHistoricos(),
+  };
 }
 
 function armarCola(rutinaId) {
@@ -1682,65 +1870,346 @@ function armarCola(rutinaId) {
   return cola;
 }
 
-async function empezarSesion(rutinaId, esRecuperacion, fechaOriginal) {
+/* ==========================================================================
+   REGISTRAR ENTRENAMIENTO CON FOTO — la única puerta de entrada
+   --------------------------------------------------------------------------
+   Todos los caminos (tarjeta del inicio, botón +, recuperar una pendiente,
+   entrenar en un día de descanso) pasan por acá. La foto es la prueba de que
+   llegó al gimnasio, así que va ANTES de entrenar, no después.
+   ========================================================================== */
+/* Una línea que describe la rutina, armada de rutinas.js para no duplicar datos. */
+function resumenRutina(rutinaId) {
+  if (rutinaId === "intervalos") {
+    return `${INTERVALOS.vueltas} vueltas · cinta y circuito`;
+  }
+  const n = MUSCULACION.bloques.reduce((a, b) => a + b.ejercicios.length, 0);
+  return `${n} ejercicios · entrada en calor y cierre`;
+}
+
+function abrirRegistroEntrenamiento(opts = {}) {
+  const hoy = hoyISO();
+
+  // Si ya hay una sesión abierta, se retoma. Nunca se pide otra foto ni se
+  // empieza una segunda sesión encima.
+  const abierta = diaConSesionAbierta();
+  if (abierta && !opts.forzarNueva) {
+    if (abierta.fecha === hoy) { retomarSesion(abierta.fecha); return; }
+    hojaSesionDeOtroDia(abierta.fecha);
+    return;
+  }
+
+  const fecha = opts.fecha || hoy;
+  const plan = planDelDia(fecha);
+  const rutinaId = opts.rutinaId || plan.rutina ||
+    (S.dias.get(fecha)?.rutinaId) || "musculacion";
+  pasoElegirRutina({ ...opts, fecha, rutinaId });
+}
+
+/* Paso 1: qué sesión va a hacer. Un toque si es la de hoy. */
+function pasoElegirRutina(ctx) {
+  const r = RUTINAS[ctx.rutinaId];
+  const plan = planDelDia(ctx.fecha);
+  const esHoy = ctx.fecha === hoyISO();
+  const yaRegistrado = sesionRegistrada(ctx.fecha);
+
+  abrirHoja(`
+    <h3>Registrar entrenamiento</h3>
+    <div class="registro-rutina">
+      <div class="etiqueta">${esHoy ? "Hoy" : esc(fmtFechaLarga(ctx.fecha))}</div>
+      <div class="registro-nombre">${esc(r.nombre)}</div>
+      <div class="dato">${esc(resumenRutina(ctx.rutinaId))}${plan.tipo === "descanso" ? " · hoy tocaba descanso" : ""}</div>
+    </div>
+    ${yaRegistrado ? `<p class="texto-2">Este día ya está registrado. Si entrenás igual,
+      se suma al mismo día.</p>` : ""}
+    ${ctx.esRecuperacion ? `<p class="texto-2">Vas a recuperar la sesión del
+      ${esc(fmtFechaLarga(ctx.fechaOriginal))}.</p>` : ""}
+    <div class="hoja-acciones">
+      <button id="reg-seguir" class="btn btn-rojo btn-grande">Continuar</button>
+      <button id="reg-cambiar" class="btn btn-texto">Cambiar de rutina</button>
+    </div>`);
+
+  $("#reg-seguir").onclick = () => pasoFoto(ctx);
+  $("#reg-cambiar").onclick = () => {
+    const otra = ctx.rutinaId === "musculacion" ? "intervalos" : "musculacion";
+    pasoElegirRutina({ ...ctx, rutinaId: otra });
+  };
+}
+
+/* Paso 2: la foto. Cámara y galería valen igual; sin foto es el desvío. */
+function pasoFoto(ctx) {
+  abrirHoja(`
+    <h3>Foto del gimnasio</h3>
+    <p class="texto-2">Sacate la foto y el entrenamiento queda registrado al instante:
+    el día pasa a verde y la racha suma. Después entrás a la rutina.</p>
+    <div class="foto-zona" id="reg-foto-zona">Todavía sin foto</div>
+    <input id="reg-foto-camara" type="file" accept="image/*" capture="environment" hidden>
+    <input id="reg-foto-galeria" type="file" accept="image/*" hidden>
+    <div class="hoja-acciones">
+      <button id="reg-camara" class="btn btn-rojo btn-grande">Sacar foto</button>
+      <button id="reg-galeria" class="btn btn-borde btn-grande">Elegir de galería</button>
+      <button id="reg-empezar" class="btn btn-primario btn-grande oculta">Empezar entrenamiento</button>
+      <button id="reg-sin-foto" class="btn btn-texto">Empezar sin foto</button>
+    </div>`);
+
+  let fotoLista = null;
+  const zona = $("#reg-foto-zona");
+
+  const tomar = async (input) => {
+    const file = input.files?.[0];
+    if (!file) return;
+    zona.textContent = "Comprimiendo…";
+    try {
+      fotoLista = await comprimirFoto(file);
+      zona.innerHTML = `<img src="${fotoLista}" alt="Foto del gimnasio">`;
+      $("#reg-empezar").classList.remove("oculta");
+      $("#reg-camara").textContent = "Sacar otra";
+      vibrar("confirmar");
+    } catch (_) {
+      zona.textContent = "No se pudo procesar la foto. Probá con la galería.";
+    }
+  };
+  $("#reg-foto-camara").onchange = (e) => tomar(e.target);
+  $("#reg-foto-galeria").onchange = (e) => tomar(e.target);
+  $("#reg-camara").onclick = () => $("#reg-foto-camara").click();
+  $("#reg-galeria").onclick = () => $("#reg-foto-galeria").click();
+  zona.onclick = () => $("#reg-foto-camara").click();
+
+  $("#reg-empezar").onclick = async (ev) => {
+    const ok = await iniciarEntrenamiento({ ...ctx, foto: fotoLista, boton: ev.currentTarget });
+    if (ok) cerrarHoja(true);
+  };
+  $("#reg-sin-foto").onclick = async (ev) => {
+    const ok = await iniciarEntrenamiento({ ...ctx, foto: null, boton: ev.currentTarget });
+    if (ok) {
+      cerrarHoja(true);
+      toast("Sin foto por ahora. La podés agregar después desde el calendario.", "", 6000);
+    }
+  };
+}
+
+/* Sesión abierta de otro día: se retoma o se cierra, no se pierde. */
+function hojaSesionDeOtroDia(fecha) {
+  abrirHoja(`
+    <h3>Tenés una sesión abierta</h3>
+    <p class="texto-2">Quedó abierta la del ${esc(fmtFechaLarga(fecha))}.
+    Ese día ya está registrado; podés retomarla o cerrarla y empezar una nueva.</p>
+    <div class="hoja-acciones">
+      <button id="so-retomar" class="btn btn-primario btn-grande">Retomar esa</button>
+      <button id="so-nueva" class="btn btn-borde btn-grande">Cerrarla y empezar hoy</button>
+    </div>`);
+  $("#so-retomar").onclick = () => { cerrarHoja(true); retomarSesion(fecha); };
+  $("#so-nueva").onclick = async (ev) => {
+    ev.currentTarget.disabled = true;
+    await cerrarSesionAutomatica(fecha);
+    cerrarHoja(true);
+    abrirRegistroEntrenamiento({ forzarNueva: true });
+  };
+}
+
+/* ==========================================================================
+   ENTRAR AL ENTRENAMIENTO
+   --------------------------------------------------------------------------
+   El día queda registrado como HECHO acá, al empezar, no al terminar. A partir
+   de este punto nada puede desregistrarlo: ni salir de la app, ni quedarse sin
+   batería, ni no llegar nunca a "Terminar y guardar".
+   ========================================================================== */
+async function iniciarEntrenamiento({ fecha, rutinaId, esRecuperacion, fechaOriginal, foto, boton }) {
   desbloquearAudio();
-  const fecha = hoyISO();
+  const esPrueba = modoPrueba();
+  const inicio = Date.now();
+  const previo = S.dias.get(fecha) || {};
+
   S.sesion = {
     fecha, rutinaId,
     esRecuperacion: !!esRecuperacion,
     fechaOriginal: fechaOriginal || null,
-    esPrueba: modoPrueba(),
-    inicio: Date.now(), paso: 0,
+    esPrueba,
+    inicio, paso: 0,
     cola: armarCola(rutinaId),
     calorHecho: {}, pesoActual: {}, repsActual: {},
-    vueltas: rutinaId === "intervalos" ? [0, 0, 0, 0] : null,
+    vueltas: previo.vueltas || (rutinaId === "intervalos" ? [0, 0, 0, 0] : null),
     timer: null, descanso: null,
     prMax: maximosHistoricos(),
   };
-  guardarSesionLocal();
-  await guardarDia(fecha, {
+
+  const cambios = {
     tipo: "entreno", rutinaId, rutinasVersion: RUTINAS_VERSION,
-    inicio: S.sesion.inicio, esPrueba: S.sesion.esPrueba,
-    series: S.dias.get(fecha)?.series || {},
+    estado: esRecuperacion ? "recuperada" : "hecha",   // registrado desde YA
+    inicio, fin: null, esPrueba,
+    series: previo.series || {},
     vueltas: S.sesion.vueltas || null,
-  });
+    sesion: sesionParaGuardar(S.sesion),
+    cerradaAutomatica: false,
+  };
+  if (esRecuperacion && fechaOriginal) cambios.recuperaDe = fechaOriginal;
+
+  if (foto) {
+    cambios.tieneFoto = true;
+    cambios.motivoSinFoto = null;
+    cambios.fotoAgregadaEl = fecha;      // sacada el mismo día: sin asterisco
+  } else if (!previo.tieneFoto) {
+    cambios.tieneFoto = false;
+  }
+
+  const ok = await guardarDia(fecha, cambios, { queHacia: "el inicio del entrenamiento", boton });
+  if (!ok) { S.sesion = null; return false; }
+
+  if (foto) {
+    await escribir("la foto del día",
+      () => setDoc(refs.diaMedia(fecha, "foto"), { data: foto, hora: inicio }));
+  }
+
+  guardarSesion();
   pedirWakeLock();
   arrancarTickeo();
+  programarCierreAutomatico();
   irA("entreno");
-  if (S.sesion.esPrueba) toast("Modo prueba: los tiempos corren a 10 s y la sesión no cuenta.", "", 5000);
+  if (esPrueba) toast("Modo prueba: los tiempos corren a 10 s y la sesión no cuenta.", "", 5000);
+  else toast("Entrenamiento registrado. Ya cuenta para la racha.", "toast-record", 4000);
+  return true;
 }
 
-function reanudarSesion() {
+function retomarSesion(fecha) {
   desbloquearAudio();
-  const s = sesionGuardadaHoy();
-  if (!s) return;
-  S.sesion = s;
+  const reg = S.dias.get(fecha);
+  if (!reg?.sesion?.abierta) return false;
+  S.sesion = sesionDesdeRegistro(fecha, reg);
+  guardarSesion();
   pedirWakeLock();
   arrancarTickeo();
+  programarCierreAutomatico();
   irA("entreno");
+  return true;
+}
+
+/* --- Cierre automático a las 23:59 ---------------------------------------- */
+
+/* Cierra la sesión de un día dado sin preguntar nada y sin descartar nada. */
+async function cerrarSesionAutomatica(fecha) {
+  const reg = S.dias.get(fecha);
+  if (!reg?.sesion?.abierta) return;
+  const fin = reg.sesion.tocada || reg.inicio || Date.now();
+  if (S.sesion?.fecha === fecha) {
+    S.sesion = null;
+    limpiarSesionLocal();
+    soltarWakeLock();
+    frenarTickeo();
+  }
+  await guardarDia(fecha, {
+    estado: reg.estado || (reg.sesion.esRecuperacion ? "recuperada" : "hecha"),
+    fin, sesion: { abierta: false }, cerradaAutomatica: true,
+  }, { queHacia: "el cierre del entrenamiento" });
+}
+
+/* Al abrir la app: cualquier sesión de un día anterior se cierra sola. */
+async function cerrarSesionesViejas() {
+  const hoy = hoyISO();
+  for (const [fecha, reg] of [...S.dias]) {
+    if (reg?.sesion?.abierta && fecha < hoy) await cerrarSesionAutomatica(fecha);
+  }
+}
+
+/* Si la app queda abierta cruzando la medianoche, se cierra igual. */
+let cierreAutoTimer = null;
+function programarCierreAutomatico() {
+  clearTimeout(cierreAutoTimer);
+  if (!S.sesion) return;
+  const ahora = new Date();
+  const p = _partes(_fmtHoraTZ, ahora);
+  const faltaMin = (23 * 60 + 59) - (Number(p.hour) * 60 + Number(p.minute));
+  if (faltaMin <= 0) return;
+  cierreAutoTimer = setTimeout(() => {
+    if (S.sesion) {
+      const f = S.sesion.fecha;
+      cerrarSesionAutomatica(f).then(() => {
+        toast("Cerramos tu entrenamiento con lo que registraste.", "", 7000);
+        irA("inicio");
+      });
+    }
+  }, Math.min(faltaMin * 60000, 2 ** 31 - 1));
+}
+
+/* Aviso amable cuando una sesión se cerró sola. */
+function avisarCierreAutomatico() {
+  const pendiente = [...S.dias.entries()]
+    .filter(([, r]) => r?.cerradaAutomatica && !r?.avisoCierreVisto && !r?.esPrueba)
+    .sort()[0];
+  if (!pendiente) return;
+  const [fecha, reg] = pendiente;
+  const dia = DIAS_NOMBRE[diaSemanaDe(fecha)];
+  const faltanDatos = !reg.hambre || !reg.cansancio || !reg.comentario;
+
+  abrirHoja(`
+    <h3>Te cerramos la sesión</h3>
+    <p class="texto-2">Cerramos tu sesión del ${esc(dia)} con lo que registraste.
+    El día quedó en verde y cuenta para la racha.
+    ${faltanDatos ? "¿Querés completar hambre y cansancio?" : ""}</p>
+    <div class="hoja-acciones">
+      ${faltanDatos ? `<button id="ca-completar" class="btn btn-primario btn-grande">Completar</button>` : ""}
+      <button id="ca-listo" class="btn btn-borde btn-grande">Está bien así</button>
+    </div>`, { onCerrar: () => marcarAvisoVisto(fecha) });
+
+  const completar = $("#ca-completar");
+  if (completar) completar.onclick = () => {
+    cerrarHoja(true);
+    marcarAvisoVisto(fecha);
+    hojaCompletarCierre(fecha);
+  };
+  $("#ca-listo").onclick = () => { cerrarHoja(true); marcarAvisoVisto(fecha); };
+}
+function marcarAvisoVisto(fecha) {
+  guardarDia(fecha, { avisoCierreVisto: true }, { queHacia: "el aviso" });
 }
 
 function salirDeSesion() {
+  const fecha = S.sesion?.fecha;
   abrirHoja(`
     <h3>¿Salir del entrenamiento?</h3>
-    <p class="texto-2">Todo lo marcado ya está guardado. Podés volver y continuar donde estabas.</p>
+    <p class="texto-2">El día ya está registrado y todo lo marcado está guardado.
+    Podés volver y seguir donde estabas, desde acá o desde el calendario.</p>
     <div class="hoja-acciones">
       <button id="salir-si" class="btn btn-primario btn-grande">Salir (se puede continuar)</button>
       <button id="salir-cancelar" class="btn btn-borde btn-grande">Seguir entrenando</button>
-      <button id="salir-descartar" class="btn btn-texto">Descartar la sesión de hoy</button>
+      <button id="salir-descartar" class="btn btn-texto">Descartar el entrenamiento</button>
     </div>`);
-  $("#salir-si").onclick = () => { cerrarHoja(true); soltarWakeLock(); irA("inicio"); };
-  $("#salir-cancelar").onclick = () => cerrarHoja(true);
-  $("#salir-descartar").onclick = async () => {
+  $("#salir-si").onclick = () => {
     cerrarHoja(true);
-    const f = S.sesion.fecha;
-    S.sesion = null; limpiarSesionLocal(); soltarWakeLock(); frenarTickeo();
-    const reg = S.dias.get(f) || {};
-    await guardarDia(f, {
+    guardarSesion({ yaMismo: true });
+    soltarWakeLock();
+    irA("inicio");
+  };
+  $("#salir-cancelar").onclick = () => cerrarHoja(true);
+  $("#salir-descartar").onclick = () => {
+    cerrarHoja(true);
+    confirmarDescarte(fecha);
+  };
+}
+
+/* Descartar es destructivo y ahora borra un día YA registrado: se confirma. */
+function confirmarDescarte(fecha) {
+  abrirHoja(`
+    <h3>¿Descartar el entrenamiento?</h3>
+    <p class="texto-2">Se borran las series, la hora de inicio y la foto de ese día,
+    y vuelve a contar como no entrenado. Esto no se puede deshacer.</p>
+    <div class="hoja-acciones">
+      <button id="desc-si" class="btn btn-rojo btn-grande">Sí, descartar</button>
+      <button id="desc-no" class="btn btn-borde btn-grande">Mejor no</button>
+    </div>`);
+  $("#desc-no").onclick = () => cerrarHoja(true);
+  $("#desc-si").onclick = async (ev) => {
+    const reg = S.dias.get(fecha) || {};
+    if (S.sesion?.fecha === fecha) {
+      S.sesion = null; limpiarSesionLocal(); soltarWakeLock(); frenarTickeo();
+    }
+    const ok = await guardarDia(fecha, {
       estado: null, rutinaId: null, inicio: null, fin: null,
       series: {}, vueltas: null, esfuerzo: {}, esPrueba: false,
-      tipo: planDelDia(f).tipo, aguaMl: reg.aguaMl || 0,
-    });
+      sesion: { abierta: false }, cerradaAutomatica: false,
+      tieneFoto: false, fotoAgregadaEl: null,
+      tipo: planDelDia(fecha).tipo, aguaMl: reg.aguaMl || 0,
+    }, { queHacia: "el descarte", boton: ev.currentTarget });
+    if (!ok) return;
+    cerrarHoja(true);
     irA("inicio");
   };
 }
@@ -1771,7 +2240,7 @@ function avanzarPaso() {
   S.sesion.paso++;
   S.sesion.timer = null;
   S.sesion.descanso = null;
-  guardarSesionLocal();
+  guardarSesion();
   window.scrollTo(0, 0);
   const cont = $("#entreno-contenido");
   cont.classList.remove("desliza");
@@ -1823,7 +2292,7 @@ function renderCalorMusculacion(cont) {
     b.onclick = () => {
       S.sesion.calorHecho[b.dataset.cal] = !S.sesion.calorHecho[b.dataset.cal];
       vibrar("leve");
-      guardarSesionLocal();
+      guardarSesion();
       renderPasoSesion();
     };
   });
@@ -1922,14 +2391,14 @@ function renderEjercicio(cont, id) {
     const v = Math.max(0, (Number(inputPeso.value) || 0) + delta);
     inputPeso.value = Math.round(v * 100) / 100;
     s.pesoActual[id] = Number(inputPeso.value);
-    guardarSesionLocal();
+    guardarSesion();
   };
   $("#peso-menos").onclick = () => cambiarPeso(-e.pesoPaso);
   $("#peso-mas").onclick = () => cambiarPeso(e.pesoPaso);
   inputPeso.onchange = () => cambiarPeso(0);
 
-  $("#reps-menos").onclick = () => { s.repsActual[id] = Math.max(1, s.repsActual[id] - 1); $("#reps-num").textContent = s.repsActual[id]; guardarSesionLocal(); };
-  $("#reps-mas").onclick = () => { s.repsActual[id]++; $("#reps-num").textContent = s.repsActual[id]; guardarSesionLocal(); };
+  $("#reps-menos").onclick = () => { s.repsActual[id] = Math.max(1, s.repsActual[id] - 1); $("#reps-num").textContent = s.repsActual[id]; guardarSesion(); };
+  $("#reps-mas").onclick = () => { s.repsActual[id]++; $("#reps-num").textContent = s.repsActual[id]; guardarSesion(); };
 
   cont.querySelectorAll("[data-serie]").forEach((b) => {
     b.onclick = async () => {
@@ -1953,13 +2422,13 @@ function renderEjercicio(cont, id) {
       }
       const limpias = nuevas.filter(Boolean);
       await guardarDia(s.fecha, { series: { ...(reg.series || {}), [id]: limpias } });
-      guardarSesionLocal();
+      guardarSesion();
       renderPasoSesion();
     };
   });
 
   const saltar = $("#descanso-saltar");
-  if (saltar) saltar.onclick = () => { s.descanso = null; guardarSesionLocal(); renderPasoSesion(); };
+  if (saltar) saltar.onclick = () => { s.descanso = null; guardarSesion(); renderPasoSesion(); };
 
   cont.querySelectorAll("[data-esf]").forEach((b) => {
     b.onclick = async () => {
@@ -1989,7 +2458,7 @@ function renderEjercicio(cont, id) {
     if (pos < 0) pos = cola.length - 1;
     cola.splice(pos, 0, actual);
     s.timer = null; s.descanso = null;
-    guardarSesionLocal();
+    guardarSesion();
     toast("Salteado. Vuelve al final.");
     renderPasoSesion();
   };
@@ -2091,7 +2560,7 @@ function renderMovilidad(cont) {
     b.onclick = () => {
       S.sesion.calorHecho[b.dataset.cal] = !S.sesion.calorHecho[b.dataset.cal];
       vibrar("leve");
-      guardarSesionLocal(); renderPasoSesion();
+      guardarSesion(); renderPasoSesion();
     };
   });
   const bt = $("#btn-mov-timer");
@@ -2147,7 +2616,7 @@ function renderBloqueIntervalo(cont, paso) {
     const cambiarV = async (delta) => {
       s.vueltas[v] = Math.max(0, Math.round(((s.vueltas[v] || 0) + delta) * 2) / 2);
       vibrar("leve");
-      guardarSesionLocal();
+      guardarSesion();
       await guardarDia(s.fecha, { vueltas: s.vueltas });
       const num = $("#vueltas-num");
       if (num) { num.textContent = s.vueltas[v]; num.dataset.valor = String(s.vueltas[v]); }
@@ -2191,15 +2660,12 @@ function renderParteCierre(cont) {
       <textarea id="cierre-comentario" placeholder="Cómo salió, qué ajustar…">${esc(reg.comentario || "")}</textarea></div>
 
     <div class="paso-indicador">Foto del gym</div>
-    <div class="foto-zona" id="foto-zona">${reg.tieneFoto ? "" : "Tocá para sacar la foto"}</div>
-    <input id="foto-input" type="file" accept="image/*" capture="environment" style="display:none">
-    ${!reg.tieneFoto ? `
-    <button id="btn-sin-foto" class="btn btn-borde btn-medio" style="width:100%">No pude sacar foto</button>
-    <div id="sin-foto-caja" class="campo mt ${reg.motivoSinFoto ? "" : "oculta"}"><label>¿Por qué no?</label>
-      <input id="foto-motivo" type="text" value="${esc(reg.motivoSinFoto || "")}" placeholder="Ej: mucha gente, salí apurado…"></div>` : ""}
+    <div class="foto-zona" id="foto-zona">${reg.tieneFoto ? "" : "Este día quedó sin foto. Tocá para agregarla."}</div>
+    <input id="foto-input" type="file" accept="image/*" hidden>
 
     <div class="entreno-pie">
       <button id="btn-terminar" class="btn btn-rojo btn-gigante">Terminar y guardar</button>
+      <p class="dato centrado">El día ya está registrado. Esto es el cierre, no un requisito.</p>
     </div>`;
 
   if (reg.tieneFoto) {
@@ -2220,49 +2686,127 @@ function renderParteCierre(cont) {
   });
 
   $("#foto-zona").onclick = () => $("#foto-input").click();
-  $("#foto-input").onchange = async (ev) => {
-    const file = ev.target.files[0];
-    if (!file) return;
-    $("#foto-zona").textContent = "Comprimiendo…";
-    try {
-      const data = await comprimirFoto(file);
-      await setDoc(refs.diaMedia(s.fecha, "foto"), { data, hora: Date.now() });
-      await guardarDia(s.fecha, { tieneFoto: true, motivoSinFoto: null });
-      renderPasoSesion();
-    } catch (_) {
-      $("#foto-zona").textContent = "No se pudo procesar la foto";
-    }
-  };
+  $("#foto-input").onchange = (ev) => guardarFotoDelDia(s.fecha, ev.target.files[0], {
+    alTerminar: () => renderPasoSesion(),
+    zona: $("#foto-zona"),
+  });
 
-  const sinFoto = $("#btn-sin-foto");
-  if (sinFoto) sinFoto.onclick = () => {
-    $("#sin-foto-caja").classList.remove("oculta");
-    $("#foto-motivo").focus();
-  };
-
-  $("#btn-terminar").onclick = async () => {
-    const motivoEl = $("#foto-motivo");
-    const motivo = motivoEl ? motivoEl.value.trim() : "";
-    if (!reg.tieneFoto && !motivo) {
-      $("#sin-foto-caja")?.classList.remove("oculta");
-      toast('Falta la foto. Sacala, o tocá "No pude sacar foto" y contá por qué.', "toast-alerta");
-      return;
-    }
-    const cambios = {
-      estado: s.esRecuperacion ? "recuperada" : "hecha",
+  /* El día YA está registrado desde que empezó. Terminar solo cierra la sesión
+     y guarda el parte: nunca decide si el día cuenta o no. */
+  $("#btn-terminar").onclick = async (ev) => {
+    const ok = await guardarDia(s.fecha, {
       fin: Date.now(),
       comentario: $("#cierre-comentario").value.trim(),
-      esPrueba: s.esPrueba,
-    };
-    if (!reg.tieneFoto && motivo) cambios.motivoSinFoto = motivo;
-    if (s.esRecuperacion && s.fechaOriginal) cambios.recuperaDe = s.fechaOriginal;
-    await guardarDia(s.fecha, cambios);
+      sesion: { abierta: false },
+      cerradaAutomatica: false,
+    }, { queHacia: "el cierre del entrenamiento", boton: ev.currentTarget });
+    if (!ok) return;
     const datos = { vol, dur: durSeg, comparacion, esPrueba: s.esPrueba };
     S.sesion = null;
     limpiarSesionLocal();
     soltarWakeLock();
     frenarTickeo();
+    clearTimeout(cierreAutoTimer);
     momentoCierre({ ...datos, alCerrar: () => irA("inicio", true) });
+  };
+}
+
+/* ==========================================================================
+   FOTO DEL DÍA — se puede agregar en cualquier momento, sin ventana de tiempo
+   ========================================================================== */
+async function guardarFotoDelDia(fecha, file, { alTerminar, zona, boton } = {}) {
+  if (!file) return false;
+  if (zona) zona.textContent = "Comprimiendo…";
+  let data;
+  try {
+    data = await comprimirFoto(file);
+  } catch (_) {
+    if (zona) zona.textContent = "No se pudo procesar la foto. Probá con otra.";
+    return false;
+  }
+  // Primero el contenido, después el puntero: si se corta en el medio queda
+  // una foto sin referencia, nunca una referencia sin foto.
+  const okFoto = await escribir("la foto del día",
+    () => setDoc(refs.diaMedia(fecha, "foto"), { data, hora: Date.now() }), boton);
+  if (!okFoto) return false;
+  const ok = await guardarDia(fecha, {
+    tieneFoto: true, motivoSinFoto: null, fotoAgregadaEl: hoyISO(),
+  }, { queHacia: "la foto del día" });
+  if (ok) {
+    vibrar("confirmar");
+    if (alTerminar) alTerminar();
+  }
+  return ok;
+}
+
+function hojaAgregarFoto(fecha) {
+  abrirHoja(`
+    <h3>Agregar la foto</h3>
+    <p class="texto-2">De ${esc(fmtFechaLarga(fecha))}. Podés sacarla ahora o buscarla
+    en la galería: no hay límite de tiempo para agregarla.</p>
+    <div class="foto-zona" id="af-zona">Todavía sin foto</div>
+    <input id="af-camara" type="file" accept="image/*" capture="environment" hidden>
+    <input id="af-galeria" type="file" accept="image/*" hidden>
+    <div class="hoja-acciones">
+      <button id="af-btn-camara" class="btn btn-rojo btn-grande">Sacar foto</button>
+      <button id="af-btn-galeria" class="btn btn-borde btn-grande">Elegir de galería</button>
+    </div>`);
+
+  const guardar = (ev) => guardarFotoDelDia(fecha, ev.target.files?.[0], {
+    zona: $("#af-zona"),
+    alTerminar: () => {
+      cerrarHoja(true);
+      toast("Foto agregada. El día quedó completo.", "toast-record");
+      refrescarVistaActual();
+    },
+  });
+  $("#af-camara").onchange = guardar;
+  $("#af-galeria").onchange = guardar;
+  $("#af-btn-camara").onclick = () => $("#af-camara").click();
+  $("#af-btn-galeria").onclick = () => $("#af-galeria").click();
+}
+
+/* Completar hambre, cansancio y comentario cuando no se pasó por el cierre. */
+function hojaCompletarCierre(fecha) {
+  const reg = S.dias.get(fecha) || {};
+  const escala = (nombre, campo, valor) => `
+    <div class="paso-indicador">${nombre}</div>
+    <div class="escala-15" data-campo="${campo}">
+      ${[1, 2, 3, 4, 5].map((n) =>
+        `<button class="btn btn-borde ${valor === n ? "sel" : ""}" data-v="${n}">${n}</button>`).join("")}
+    </div>`;
+
+  abrirHoja(`
+    <h3>Completar el día</h3>
+    <p class="texto-2">${esc(fmtFechaLarga(fecha))}</p>
+    ${escala("Hambre", "hambre", reg.hambre)}
+    ${escala("Cansancio", "cansancio", reg.cansancio)}
+    <div class="campo"><label>Comentario</label>
+      <textarea id="cc-comentario" placeholder="Cómo salió, qué ajustar…">${esc(reg.comentario || "")}</textarea></div>
+    <div class="hoja-acciones">
+      <button id="cc-guardar" class="btn btn-primario btn-grande">Guardar</button>
+    </div>`);
+
+  const elegido = { hambre: reg.hambre, cansancio: reg.cansancio };
+  $$("#hoja-contenido [data-campo]").forEach((caja) => {
+    caja.querySelectorAll("button").forEach((b) => {
+      b.onclick = () => {
+        elegido[caja.dataset.campo] = Number(b.dataset.v);
+        caja.querySelectorAll("button").forEach((x) => x.classList.toggle("sel", x === b));
+        vibrar("leve");
+      };
+    });
+  });
+  $("#cc-guardar").onclick = async (ev) => {
+    const ok = await guardarDia(fecha, {
+      hambre: elegido.hambre ?? null,
+      cansancio: elegido.cansancio ?? null,
+      comentario: $("#cc-comentario").value.trim(),
+    }, { queHacia: "el parte del día", boton: ev.currentTarget });
+    if (!ok) return;
+    cerrarHoja(true);
+    toast("Día completado.");
+    refrescarVistaActual();
   };
 }
 
@@ -2324,15 +2868,20 @@ function renderCalendario() {
     if (e === "previo") cls = "d-previo";
     else if (iso <= hoy || S.dias.has(iso)) {
       if (e === "hecha") cls = "d-hecha";
+      else if (e === "a-medias") cls = "d-hecha d-a-medias";
       else if (e === "recuperada") cls = "d-recuperada";
       else if (e === "causa-mayor") cls = "d-causa";
       else if (e === "fallada") cls = "d-fallada";
       else if (e === "descanso-caminata") cls = "d-descanso-caminata";
       else if (e === "descanso") cls = "d-descanso";
     }
+    const reg = S.dias.get(iso);
+    if (sesionRegistrada(iso) && !reg?.tieneFoto) cls += " d-sin-foto";
+    if (reg?.sesion?.abierta) cls += " d-abierta";
     const celda = el("button", `cal-dia ${cls} ${iso === hoy ? "d-hoy" : ""}`, String(d));
     if (e === "previo") celda.disabled = true;
-    else celda.onclick = () => (sesionRegistrada(iso) ? abrirFicha(iso, celda) : hojaDetalleDia(iso));
+    // Siempre el detalle: es desde donde se arregla cualquier cosa del día.
+    else celda.onclick = () => hojaDetalleDia(iso);
     grilla.appendChild(celda);
   }
 }
@@ -2360,41 +2909,157 @@ function renderHeatmap() {
   $("#heatmap").scrollLeft = 99999;
 }
 
-/* Detalle de un día SIN sesión (descanso, fallado, causa mayor, retro) */
+/* Detalle de un día: la puerta para arreglar cualquier cosa que quedó a medias.
+   Las acciones que ofrece dependen del estado en que quedó ese día. */
 function hojaDetalleDia(fecha) {
   const reg = regReal(fecha);
   const estado = estadoDia(fecha);
   const plan = planDelDia(fecha);
+  const hoy = hoyISO();
   const ETIQUETAS = {
     "hecha": "Entrenó", "recuperada": "Recuperada", "descanso": "Descanso",
     "descanso-caminata": "Descanso con caminata", "causa-mayor": "Causa mayor",
-    "fallada": "Fallada", "pendiente": "Pendiente",
+    "fallada": "Fallada", "pendiente": "Pendiente", "a-medias": "Entrenó (sin cerrar)",
   };
+  const abierta = !!reg?.sesion?.abierta;
+  const registrado = sesionRegistrada(fecha);
+  const faltaFoto = registrado && !reg?.tieneFoto;
+  const faltaParte = registrado && (!reg?.hambre || !reg?.cansancio);
 
-  let cuerpo = `<div class="dia-detalle-fila"><span>Estado</span><span>${ETIQUETAS[estado] || estado}</span></div>`;
+  let cuerpo = `<div class="dia-detalle-fila"><span>Estado</span><span>${ETIQUETAS[estado] || estado}${abierta ? " · abierta" : ""}</span></div>`;
+  if (reg?.rutinaId) cuerpo += `<div class="dia-detalle-fila"><span>Rutina</span><span>${esc(RUTINAS[reg.rutinaId]?.nombre || reg.rutinaId)}</span></div>`;
+  if (reg?.cerradaAutomatica) cuerpo += `<div class="dia-detalle-fila"><span>Cierre</span><span>Automático</span></div>`;
   if (reg?.causaMayor?.motivo)
     cuerpo += `<div class="dia-detalle-fila"><span>Motivo</span><span>${esc(reg.causaMayor.motivo)}${reg.causaMayor.conEscudo ? " · con escudo" : ""}</span></div>`;
   if (reg?.caminata?.minutos)
     cuerpo += `<div class="dia-detalle-fila"><span>Caminata</span><span>${reg.caminata.minutos} min${reg.caminata.nota ? " · " + esc(reg.caminata.nota) : ""}</span></div>`;
-  if (reg?.aguaMl) cuerpo += `<div class="dia-detalle-fila"><span>Agua</span><span class="num">${reg.aguaMl} ml</span></div>`;
+  if (reg?.aguaMl) cuerpo += `<div class="dia-detalle-fila"><span>Agua</span><span class="num">${fmtLitros(reg.aguaMl)} L</span></div>`;
+  if (faltaFoto) cuerpo += `<div class="dia-detalle-fila"><span>Foto</span><span>Sin foto ✳️</span></div>`;
+  else if (reg?.fotoAgregadaEl && reg.fotoAgregadaEl !== fecha)
+    cuerpo += `<div class="dia-detalle-fila"><span>Foto</span><span class="dato">agregada el ${DIAS_NOMBRE[diaSemanaDe(reg.fotoAgregadaEl)]}</span></div>`;
   if (reg?.comentario) cuerpo += `<p class="mt">${esc(reg.comentario)}</p>`;
 
-  let acciones = "";
-  if (plan.tipo === "entreno" && !sesionRegistrada(fecha) && estado !== "causa-mayor" && fecha < hoyISO()) {
-    acciones += `<button id="dd-retro" class="btn btn-primario btn-grande">Registrar retroactivo</button>`;
+  const acciones = [];
+  if (abierta) acciones.push(`<button id="dd-retomar" class="btn btn-rojo btn-grande">Retomar el entrenamiento</button>`);
+  if (registrado) acciones.push(`<button id="dd-ficha" class="btn btn-borde btn-grande">Ver la ficha completa</button>`);
+  if (registrado && reg?.rutinaId) acciones.push(`<button id="dd-series" class="btn btn-borde btn-grande">Corregir pesos y repeticiones</button>`);
+  if (faltaFoto) acciones.push(`<button id="dd-foto" class="btn btn-borde btn-grande">Agregar la foto</button>`);
+  if (faltaParte) acciones.push(`<button id="dd-parte" class="btn btn-borde btn-grande">Completar hambre y cansancio</button>`);
+  if (!registrado && estado !== "causa-mayor" && fecha <= hoy) {
+    acciones.push(`<button id="dd-hecho" class="btn btn-primario btn-grande">Marcar como hecho</button>`);
+    acciones.push(`<button id="dd-retro" class="btn btn-borde btn-grande">Cargar los pesos que hice</button>`);
   }
-  if (plan.tipo === "descanso" && fecha <= hoyISO()) {
-    acciones += `<button id="dd-caminata" class="btn btn-borde btn-grande">${reg?.caminata ? "Editar" : "Registrar"} caminata</button>`;
+  if (plan.tipo === "descanso" && fecha <= hoy) {
+    acciones.push(`<button id="dd-caminata" class="btn btn-borde btn-grande">${reg?.caminata ? "Editar" : "Registrar"} caminata</button>`);
   }
 
   abrirHoja(`
     <h3 style="text-transform:capitalize">${fmtFechaLarga(fecha)}</h3>
     ${cuerpo}
-    ${acciones ? `<div class="hoja-acciones">${acciones}</div>` : ""}`);
-  const retro = $("#dd-retro");
-  if (retro) retro.onclick = () => hojaRetro(fecha);
-  const cam = $("#dd-caminata");
-  if (cam) cam.onclick = () => hojaCaminata(fecha);
+    ${acciones.length ? `<div class="hoja-acciones">${acciones.join("")}</div>` : ""}`);
+
+  const on = (id, fn) => { const b = $(`#${id}`); if (b) b.onclick = fn; };
+  on("dd-retomar", () => { cerrarHoja(true); retomarSesion(fecha); });
+  on("dd-ficha", () => { cerrarHoja(true); abrirFicha(fecha); });
+  on("dd-series", () => hojaEditarSeries(fecha));
+  on("dd-foto", () => hojaAgregarFoto(fecha));
+  on("dd-parte", () => hojaCompletarCierre(fecha));
+  on("dd-retro", () => hojaRetro(fecha));
+  on("dd-caminata", () => hojaCaminata(fecha));
+  on("dd-hecho", async (ev) => {
+    const rutinaId = plan.rutina || reg?.rutinaId || "musculacion";
+    const ok = await guardarDia(fecha, {
+      tipo: "entreno", rutinaId, rutinasVersion: RUTINAS_VERSION,
+      estado: "hecha", registradoAMano: true, esPrueba: false,
+      inicio: reg?.inicio || parseISO(fecha).getTime(),
+    }, { queHacia: "el día", boton: ev.currentTarget });
+    if (!ok) return;
+    cerrarHoja(true);
+    await procesarSemanasCerradas();
+    refrescarVistaActual();
+    toast("Día marcado como hecho.", "toast-record");
+  });
+}
+
+/* Corregir pesos y repeticiones de series ya cargadas, en cualquier momento. */
+function hojaEditarSeries(fecha) {
+  const reg = S.dias.get(fecha) || {};
+  const rutinaId = reg.rutinaId || "musculacion";
+
+  if (rutinaId === "intervalos") {
+    const v = reg.vueltas || [0, 0, 0, 0];
+    abrirHoja(`
+      <h3>Corregir vueltas</h3>
+      <p class="texto-2">${esc(fmtFechaLarga(fecha))}</p>
+      <div class="campo"><label>Vueltas por bloque</label>
+        <div class="retro-vueltas">
+          ${[0, 1, 2, 3].map((i) => `<input data-ed-v="${i}" type="number" inputmode="decimal"
+            step="0.5" min="0" value="${v[i] || 0}">`).join("")}
+        </div></div>
+      <div class="hoja-acciones">
+        <button id="ed-guardar" class="btn btn-primario btn-grande">Guardar</button>
+      </div>`);
+    $("#ed-guardar").onclick = async (ev) => {
+      const vueltas = $$("[data-ed-v]").map((i) => Number(i.value) || 0);
+      const ok = await guardarDia(fecha, { vueltas },
+        { queHacia: "las vueltas", boton: ev.currentTarget });
+      if (!ok) return;
+      cerrarHoja(true);
+      refrescarVistaActual();
+      toast("Corregido.");
+    };
+    return;
+  }
+
+  const ejercicios = MUSCULACION.bloques.flatMap((b) => b.ejercicios);
+  const filas = ejercicios.map((e) => {
+    const ss = reg.series?.[e.id] || [];
+    if (!ss.length) return "";
+    return `
+      <div class="ed-ejercicio">
+        <div class="ficha-nombre">${esc(e.nombre)}</div>
+        ${ss.map((x, i) => `
+          <div class="ed-serie">
+            <span class="dato">Serie ${i + 1}</span>
+            <input data-ed="${e.id}" data-i="${i}" data-campo="peso" type="number"
+              inputmode="decimal" step="${e.pesoPaso}" min="0" value="${x?.peso ?? ""}" aria-label="Peso">
+            <span class="dato">kg ×</span>
+            <input data-ed="${e.id}" data-i="${i}" data-campo="reps" type="number"
+              inputmode="numeric" step="1" min="0" value="${x?.reps ?? ""}" aria-label="Repeticiones">
+          </div>`).join("")}
+      </div>`;
+  }).join("");
+
+  if (!filas.trim()) {
+    abrirHoja(`<h3>Sin series cargadas</h3>
+      <p class="texto-2">Ese día no tiene series para corregir. Podés cargarlas
+      con "Cargar los pesos que hice".</p>`);
+    return;
+  }
+
+  abrirHoja(`
+    <h3>Corregir series</h3>
+    <p class="texto-2">${esc(fmtFechaLarga(fecha))}. Se recalculan récords y volumen.</p>
+    ${filas}
+    <div class="hoja-acciones">
+      <button id="ed-guardar" class="btn btn-primario btn-grande">Guardar cambios</button>
+    </div>`);
+
+  $("#ed-guardar").onclick = async (ev) => {
+    const series = JSON.parse(JSON.stringify(reg.series || {}));
+    for (const inp of $$("[data-ed]")) {
+      const id = inp.dataset.ed, i = Number(inp.dataset.i);
+      if (!series[id]?.[i]) continue;
+      const valor = Number(inp.value);
+      if (Number.isFinite(valor)) series[id][i][inp.dataset.campo] = valor;
+    }
+    const ok = await guardarDia(fecha, { series },
+      { queHacia: "las series", boton: ev.currentTarget });
+    if (!ok) return;
+    cerrarHoja(true);
+    refrescarVistaActual();
+    toast("Series corregidas.");
+  };
 }
 
 function hojaRetro(fecha) {
@@ -2424,11 +3089,30 @@ function hojaRetro(fecha) {
     ${campos}
     <div class="campo"><label>Comentario</label>
       <input id="retro-comentario" type="text" placeholder="Opcional"></div>
+    <div class="paso-indicador">Foto (opcional)</div>
+    <p class="dato">De un día pasado no se puede sacar en el momento, así que buscala
+    en la galería si la tenés. El día cuenta igual sin foto.</p>
+    <div class="foto-zona" id="retro-zona">Sin foto</div>
+    <input id="retro-galeria" type="file" accept="image/*" hidden>
+    <button id="retro-btn-galeria" class="btn btn-borde btn-medio" style="width:100%">Elegir de galería</button>
     <div class="hoja-acciones">
       <button id="retro-guardar" class="btn btn-primario btn-grande">Guardar como hecha</button>
     </div>`);
 
-  $("#retro-guardar").onclick = async () => {
+  let fotoRetro = null;
+  $("#retro-btn-galeria").onclick = () => $("#retro-galeria").click();
+  $("#retro-galeria").onchange = async (ev) => {
+    const file = ev.target.files?.[0];
+    if (!file) return;
+    const zona = $("#retro-zona");
+    zona.textContent = "Comprimiendo…";
+    try {
+      fotoRetro = await comprimirFoto(file);
+      zona.innerHTML = `<img src="${fotoRetro}" alt="Foto del día">`;
+    } catch (_) { zona.textContent = "No se pudo procesar la foto"; }
+  };
+
+  $("#retro-guardar").onclick = async (ev) => {
     const dia = {
       tipo: "entreno", rutinaId, rutinasVersion: RUTINAS_VERSION,
       estado: "hecha", retroactivo: true, esPrueba: false,
@@ -2446,7 +3130,13 @@ function hojaRetro(fecha) {
     } else {
       dia.vueltas = $$("[data-retro-v]").map((inp) => Number(inp.value) || 0);
     }
-    await guardarDia(fecha, dia);
+    if (fotoRetro) { dia.tieneFoto = true; dia.fotoAgregadaEl = hoyISO(); }
+    const ok = await guardarDia(fecha, dia, { queHacia: "el día", boton: ev.currentTarget });
+    if (!ok) return;
+    if (fotoRetro) {
+      await escribir("la foto del día",
+        () => setDoc(refs.diaMedia(fecha, "foto"), { data: fotoRetro, hora: Date.now() }));
+    }
     cerrarHoja(true);
     await procesarSemanasCerradas();
     refrescarVistaActual();
