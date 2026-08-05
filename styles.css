@@ -17,6 +17,7 @@
   --rojo: #D62828;
   --verde: #30D158;
   --amarillo: #FFD60A;
+  --azul: #0A84FF;   /* solo el extra de caminata */
 
   --r-tarjeta: 20px;
   --r-boton: 14px;
@@ -121,6 +122,94 @@ img { max-width: 100%; display: block; }
 .vista.sale { animation: vista-sale var(--t) var(--curva) both; }
 @keyframes vista-entra { from { opacity: 0; transform: translateY(8px); } }
 @keyframes vista-sale { to { opacity: 0; transform: translateY(-8px); } }
+
+/* ============================================================================
+   INICIO — entra en una pantalla, sin scroll. Requisito firme.
+   100dvh (no 100vh: en iOS cuenta mal por la barra de Safari) + overflow
+   hidden + grid. Solo el inicio; el resto de las pantallas scrollea normal.
+
+   Orden de compresión cuando no entra: primero los espaciados, después los
+   cuerpos con clamp(), después la fila de logros se pliega dentro de la
+   tarjeta de racha, y por último se saca la línea secundaria del peso.
+   Nunca se achican por debajo de lo legible la racha, el entreno ni el agua.
+   ========================================================================== */
+.vista-inicio {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows:
+    auto                                  /* fecha + engranaje */
+    auto                                  /* titular + frase */
+    minmax(130px, 1fr)                    /* racha: la fila flexible */
+    auto                                  /* entreno | agua */
+    auto                                  /* peso */
+    auto;                                 /* logros */
+  gap: clamp(6px, 1.4vh, 12px);
+  padding:
+    calc(env(safe-area-inset-top, 0px) + clamp(4px, 1.2vh, 12px))
+    calc(env(safe-area-inset-right, 0px) + 20px)
+    /* barra flotante: 64px + su separación + safe area */
+    calc(env(safe-area-inset-bottom, 0px) + 92px)
+    calc(env(safe-area-inset-left, 0px) + 20px);
+}
+.inicio-cabecera {
+  display: flex; align-items: center; justify-content: space-between;
+  min-height: 36px;
+}
+.inicio-cabecera .btn-icono { min-width: 44px; min-height: 44px; margin-right: -8px; }
+.inicio-cabecera .btn-icono svg {
+  width: 22px; height: 22px; fill: none; stroke: currentColor;
+  stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+}
+.inicio-encabezado { min-height: 0; overflow: hidden; }
+.vista-inicio .titular { font-size: clamp(24px, 4.2vh, 34px); }
+.vista-inicio .frase { font-size: clamp(13px, 1.9vh, 17px); margin-top: 2px; }
+.vista-inicio .fila-2 { margin-top: 0; gap: clamp(8px, 1.4vh, 12px); }
+.vista-inicio .fila-2 .tarjeta { min-height: clamp(96px, 14vh, 150px); }
+.vista-inicio .tarjeta { padding: clamp(12px, 2vh, 20px); }
+.vista-inicio .tarjeta-peso { margin-top: 0; }
+.vista-inicio #racha-tarjeta { margin-top: 0; min-height: 0; }
+.vista-inicio .racha { height: 100%; padding: clamp(12px, 2vh, 24px) 20px; }
+.vista-inicio #logros-zona { margin-top: 0; min-height: 0; overflow: hidden; }
+.vista-inicio .tarjeta-valor { font-size: clamp(17px, 2.6vh, 22px); }
+.vista-inicio .racha-num { font-size: clamp(24px, 4vh, 34px); margin: 2px 0 clamp(6px, 1.2vh, 12px); }
+.vista-inicio .racha-galon-grande { height: clamp(26px, 4vh, 44px); margin-bottom: 4px; }
+.vista-inicio .racha-galones { gap: clamp(6px, 1.4vw, 12px); margin-bottom: 4px; }
+.vista-inicio .racha-galones svg { width: clamp(20px, 6vw, 30px); height: auto; }
+.vista-inicio .anillo { width: clamp(38px, 6vh, 52px); height: clamp(38px, 6vh, 52px); }
+
+/* Pantallas bajas: los logros se pliegan dentro de la tarjeta de racha */
+#logros-en-racha { display: none; }
+#logros-en-racha .logros-fila { justify-content: center; margin-top: 8px; }
+@media (max-height: 780px) {
+  .vista-inicio #logros-zona { display: none; }
+  .vista-inicio #logros-en-racha { display: block; }
+  .vista-inicio #logros-en-racha .logro { font-size: 11px; padding: 4px 10px; }
+}
+
+/* Más bajas: se van los adornos y las líneas secundarias, en este orden.
+   El galón grande es un duplicado decorativo de la fila de galones, y "Falta:
+   jueves, viernes" es información que ya está en el calendario. La alerta de
+   racha en riesgo se queda: esa sí hace falta verla. */
+/* En cualquier teléfono, "Falta: jueves, viernes" se pliega: los galones ya
+   dicen 2 de 4 y la alerta dice si la racha corre riesgo. En tablet sí entra. */
+@media (max-height: 900px) {
+  .vista-inicio .racha-falta { display: none; }
+  .vista-inicio .racha-num { margin: 2px 0 8px; }
+  .vista-inicio .racha-galon-grande { height: clamp(24px, 3.2vh, 34px); }
+}
+@media (max-height: 700px) {
+  .vista-inicio .racha-galon-grande { display: none; }
+  .vista-inicio .fila-2 .tarjeta-nota { display: none; }
+  .vista-inicio .tarjeta-peso .tarjeta-nota { display: none; }
+  .vista-inicio #logros-en-racha { display: none; }
+  .vista-inicio .racha-semana { font-size: 13px; }
+}
+/* Al límite: la tarjeta de peso se reduce a una sola línea */
+@media (max-height: 620px) {
+  .vista-inicio .tarjeta-peso .peso-fila:nth-child(2) { display: none; }
+}
 
 /* Encabezado que se contrae */
 .mini-cabecera {
@@ -229,10 +318,13 @@ img { max-width: 100%; display: block; }
 /* Tarjeta de racha: el elemento principal */
 #racha-tarjeta { margin-top: 24px; }
 .racha {
+  width: 100%; display: block;
   border-radius: var(--r-tarjeta); padding: 24px 20px; text-align: center;
   border: 1px solid var(--separador);
-  position: relative;
+  position: relative; color: var(--texto);
+  transition: transform 120ms ease;
 }
+.racha:active { transform: scale(0.98); }
 .racha-galon-grande { height: 44px; margin: 0 auto 8px; display: block; }
 .racha-rango { font-size: 13px; font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; }
 .racha-num { font-size: 34px; font-weight: 700; letter-spacing: -1px; margin: 4px 0 12px; font-variant-numeric: tabular-nums; }
@@ -261,6 +353,13 @@ img { max-width: 100%; display: block; }
 .galon-lleno { fill: currentColor; stroke: none; }
 .galon-vacio { fill: none; stroke: currentColor; stroke-width: 1.6; opacity: .45; }
 .galon-rojo { fill: var(--rojo); stroke: none; }
+.galon-hecho { fill: var(--verde); stroke: none; }
+.galon-extra { fill: var(--azul); stroke: none; }
+/* El quinto galón es un extra: va apenas separado de los cuatro */
+.racha-galones .galon-extra { margin-left: 4px; }
+.racha-extra { color: var(--azul); font-weight: 600; }
+.racha.completa { box-shadow: 0 0 0 2px var(--verde) inset; }
+.racha.completa .racha-rango { color: var(--verde); font-size: 15px; }
 
 /* Tarjeta de peso */
 .tarjeta-peso { margin-top: 12px; }
@@ -306,7 +405,7 @@ img { max-width: 100%; display: block; }
   backdrop-filter: blur(24px) saturate(180%);
   border: 1px solid var(--separador);
   box-shadow: 0 8px 24px rgba(0,0,0,.10);
-  display: grid; grid-template-columns: repeat(5, 1fr);
+  display: grid; grid-template-columns: repeat(4, 1fr);
   align-items: center;
   transition: transform var(--t) var(--curva), opacity var(--t) var(--curva);
 }
@@ -740,6 +839,40 @@ canvas.grafico-mini { width: 100%; height: 130px; background: var(--superficie);
   padding: 16px; font-size: 16px; line-height: 1.6; margin-top: 12px; text-align: center;
 }
 .discos-resultado strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+
+/* --- Escala 1-5 visible en la ficha ---------------------------------------- */
+.ficha-escala {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 0; border-bottom: 1px solid var(--separador);
+}
+.ficha-escala .esc-puntos { display: flex; gap: 6px; margin-left: auto; }
+.esc-punto {
+  width: 30px; height: 30px; border-radius: 50%;
+  border: 1px solid var(--separador); background: var(--superficie);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 600; color: var(--texto2);
+  font-variant-numeric: tabular-nums;
+}
+.esc-punto.sel { background: var(--texto); color: var(--fondo); border-color: var(--texto); }
+.ficha-escala.vacia .esc-puntos { opacity: .45; }
+.ficha-acciones { display: grid; gap: 8px; margin-top: 24px; }
+
+/* Foto: cámara y galería, dos caminos que valen igual */
+.foto-botones { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+
+/* Récords tocables */
+.pr-fila { width: 100%; text-align: left; transition: transform 120ms ease; }
+.pr-fila:active { transform: scale(0.98); }
+.ej-img-clara { background: var(--superficie); max-height: 30vh; }
+
+/* Agua: registros borrables y lápiz de medidas */
+.agua-registros li { align-items: center; gap: 8px; }
+.agua-registros li b { flex: none; min-width: 84px; }
+.agua-registros li span { flex: 1; }
+.agua-registros .btn-icono { min-width: 36px; min-height: 36px; font-size: 15px; }
+.agua-botones .btn small { display: block; font-size: 12px; font-weight: 500; opacity: .8; }
+.agua-editar { display: flex; justify-content: center; margin-top: 4px; }
+.lapiz-btn { font-size: 13px; padding: 4px 6px; min-height: 28px; }
 
 /* --- Barra flotante de descanso -------------------------------------------- */
 .barra-descanso {

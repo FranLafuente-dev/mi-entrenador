@@ -136,7 +136,33 @@ function fmtCrono(seg) {
   seg = Math.max(0, Math.ceil(seg));
   return `${Math.floor(seg / 60)}:${String(seg % 60).padStart(2, "0")}`;
 }
-function fmtKg(n) { return Number(n).toLocaleString("es-AR"); }
+/* ==========================================================================
+   NÚMEROS — una sola puerta de entrada y una sola de salida
+   --------------------------------------------------------------------------
+   El teclado en español entrega coma, y `input type="number"` descarta lo que
+   no entiende: por eso no se podían escribir decimales. Los campos numéricos
+   pasan a type="text" con inputmode="decimal", y todo lo que se escribe se lee
+   por acá, que acepta coma y punto.
+   ========================================================================== */
+const DECIMALES = { peso: 3, objetivo: 3, carga: 1, ml: 0 };
+
+function leerNumero(entrada, tipo = "carga") {
+  const crudo = (typeof entrada === "string" ? entrada : entrada?.value ?? "").trim();
+  if (!crudo) return null;
+  const n = Number(crudo.replace(/\s/g, "").replace(",", "."));
+  if (!Number.isFinite(n)) return null;
+  const dec = DECIMALES[tipo] ?? 1;
+  return Math.round(n * 10 ** dec) / 10 ** dec;
+}
+
+/* Siempre con coma y sin ceros de más: 84,25 kg y no 84,250 kg. */
+function fmtNumero(n, tipo = "carga") {
+  if (n == null || !Number.isFinite(Number(n))) return "—";
+  return Number(n).toLocaleString("es-AR", {
+    minimumFractionDigits: 0, maximumFractionDigits: DECIMALES[tipo] ?? 1,
+  });
+}
+function fmtKg(n) { return fmtNumero(n, "carga"); }
 function fmtLitros(ml) { return (ml / 1000).toLocaleString("es-AR", { maximumFractionDigits: 1 }); }
 
 const movReducido = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -190,7 +216,7 @@ function sargento(clave, vars = {}) {
 
 /* --- SVG: galones (chevrones) y anillos --- */
 function svgGalon(estado, extra = "") {
-  // estado: "lleno" | "vacio" | "rojo"
+  // estado: "lleno" | "vacio" | "rojo" | "hecho" (verde) | "extra" (azul)
   return `<svg viewBox="0 0 24 20" class="${extra}" aria-hidden="true">
     <path class="galon-${estado}" d="M12 2.5 22 10v5L12 8 2 15v-5z"/></svg>`;
 }
@@ -209,16 +235,10 @@ function svgAnillo(pct, { tilde = false } = {}) {
 /* ==========================================================================
    TEMA — sigue al sistema, con toggle manual, y transición animada
    ========================================================================== */
-function aplicarTema(pref, animado) {
-  if (animado && !movReducido()) {
-    document.documentElement.classList.add("transicion-tema");
-    setTimeout(() => document.documentElement.classList.remove("transicion-tema"), 350);
-  }
-  if (!pref || pref === "auto") document.documentElement.removeAttribute("data-theme");
-  else document.documentElement.setAttribute("data-theme", pref);
-  localStorage.setItem("tema", pref || "auto");
-}
-aplicarTema(localStorage.getItem("tema") || "auto", false);
+/* Claro y oscuro siguen al sistema y punto: no hay selector. Se limpia el
+   `data-theme` que pudo dejar una versión anterior. */
+document.documentElement.removeAttribute("data-theme");
+localStorage.removeItem("tema");
 
 /* ==========================================================================
    MODO PRUEBA — timers de 10s, sesiones que no cuentan
@@ -980,12 +1000,65 @@ function refrescarVistaActual() {
   else if (vistaActual === "entreno" && S.sesion) renderPasoSesion();
 }
 
-/* Encabezado que se contrae al hacer scroll (como Ajustes de iOS) */
-window.addEventListener("scroll", () => {
-  const mini = $("#inicio-mini");
-  if (!mini || vistaActual !== "inicio") return;
-  mini.classList.toggle("compacta", window.scrollY > 48);
-}, { passive: true });
+
+/* ==========================================================================
+   DESLIZAR ENTRE SECCIONES
+   --------------------------------------------------------------------------
+   Sigue al dedo en tiempo real, con resistencia en los extremos. Solo se activa
+   si el gesto es claramente horizontal (el doble que el vertical y más de 12 px),
+   así no pelea con el scroll ni con el arrastre de las hojas.
+   ========================================================================== */
+const ORDEN_SECCIONES = ["inicio", "calendario", "progreso", "ajustes"];
+
+(function () {
+  const lienzo = $("#lienzo");
+  let x0 = 0, y0 = 0, dx = 0;
+  let decidido = null;      // null = todavía no se sabe; "h" | "v"
+  let activo = false;
+
+  const puedeDeslizar = () =>
+    ORDEN_SECCIONES.includes(vistaActual) && !hojaAbierta && !movReducido();
+
+  lienzo.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 1 || !puedeDeslizar()) { activo = false; return; }
+    activo = true; decidido = null; dx = 0;
+    x0 = e.touches[0].clientX; y0 = e.touches[0].clientY;
+  }, { passive: true });
+
+  lienzo.addEventListener("touchmove", (e) => {
+    if (!activo || e.touches.length !== 1) return;
+    const ex = e.touches[0].clientX - x0;
+    const ey = e.touches[0].clientY - y0;
+
+    if (decidido === null) {
+      if (Math.abs(ex) < 12 && Math.abs(ey) < 12) return;   // todavía indeciso
+      decidido = Math.abs(ex) > Math.abs(ey) * 2 ? "h" : "v";
+      if (decidido === "v") activo = false;
+      return;
+    }
+    if (decidido !== "h") return;
+
+    const i = ORDEN_SECCIONES.indexOf(vistaActual);
+    const enBorde = (ex > 0 && i === 0) || (ex < 0 && i === ORDEN_SECCIONES.length - 1);
+    dx = enBorde ? Math.sign(ex) * Math.pow(Math.abs(ex), 0.62) : ex;   // resistencia
+    lienzo.style.transition = "none";
+    lienzo.style.transform = `translateX(${dx}px)`;
+  }, { passive: true });
+
+  const soltar = () => {
+    if (!activo || decidido !== "h") { activo = false; return; }
+    activo = false;
+    lienzo.style.transition = "";
+    lienzo.style.transform = "";
+    const i = ORDEN_SECCIONES.indexOf(vistaActual);
+    const umbral = Math.min(90, window.innerWidth * 0.22);
+    if (dx <= -umbral && i < ORDEN_SECCIONES.length - 1) irA(ORDEN_SECCIONES[i + 1]);
+    else if (dx >= umbral && i > 0) irA(ORDEN_SECCIONES[i - 1]);
+    dx = 0;
+  };
+  lienzo.addEventListener("touchend", soltar, { passive: true });
+  lienzo.addEventListener("touchcancel", soltar, { passive: true });
+})();
 
 /* ==========================================================================
    HOJA MODAL — sube desde abajo, se cierra arrastrando, escala el fondo
@@ -1155,6 +1228,11 @@ window.addEventListener("deviceorientation", (e) => {
 /* ==========================================================================
    DATOS DERIVADOS (siempre filtrando sesiones de prueba)
    ========================================================================== */
+/* Kilos movidos en una sesión.
+   En intervalos, los ejercicios del circuito con mancuerna SÍ entran al total:
+   cuentan peso × repeticiones, y los que son `porLado` cuentan doble porque se
+   hacen con los dos brazos (el curl y la patada de tríceps). Los que no tienen
+   peso no suman kilos. */
 function volumenSesion(reg) {
   if (!reg) return 0;
   if (reg.rutinaId === "musculacion" && reg.series) {
@@ -1165,7 +1243,7 @@ function volumenSesion(reg) {
   }
   if (reg.rutinaId === "intervalos" && reg.vueltas) {
     const porVuelta = INTERVALOS.circuito.reduce((a, e) =>
-      a + e.reps * (e.peso || 0) * (e.porLado ? 2 : 1), 0);
+      a + (e.peso || 0) * e.reps * (e.porLado ? 2 : 1), 0);
     return Math.round(reg.vueltas.reduce((a, b) => a + (b || 0), 0) * porVuelta);
   }
   return 0;
@@ -1264,7 +1342,6 @@ function renderInicio() {
   const sinFoto = entrenado && !reg?.tieneFoto;
 
   $("#inicio-fecha").textContent = fmtFechaLarga(hoy);
-  $("#inicio-mini-titulo").textContent = fmtFechaLarga(hoy);
 
   /* --- Titular + frase del sargento --- */
   const titular = $("#inicio-titular");
@@ -1389,8 +1466,12 @@ function renderRacha(racha, semanaActual) {
   const hora = horaAhora();
   const dow = diaSemanaDe(hoy);
 
-  const galones = Array.from({ length: CONFIG.sesionesPorSemana }, (_, i) =>
-    svgGalon(i < semanaActual.sesiones ? (clase === "r-elite" && i === semanaActual.sesiones - 1 ? "rojo" : "lleno") : "vacio")).join("");
+  /* Los cuatro días de la semana en verde a medida que se completan, y un
+     quinto en azul que aparece solo si hubo caminata en día de descanso: es un
+     extra por encima de los cuatro, no un reemplazo. */
+  let galones = Array.from({ length: CONFIG.sesionesPorSemana }, (_, i) =>
+    svgGalon(i < semanaActual.sesiones ? "hecho" : "vacio")).join("");
+  if (semanaActual.caminatas > 0) galones += svgGalon("extra", "galon-extra");
 
   let falta = "";
   if (!semanaActual.completa && proximas.length) {
@@ -1408,15 +1489,20 @@ function renderRacha(racha, semanaActual) {
     alerta = `<div class="racha-congelada">Semana con escudo: racha congelada</div>`;
   }
 
-  $("#racha-tarjeta").innerHTML = `
-    <div class="racha ${clase}">
+  const zona = $("#racha-tarjeta");
+  zona.innerHTML = `
+    <button class="racha ${clase} ${semanaActual.completa ? "completa" : ""}">
       ${svgGalon(clase === "r-elite" ? "rojo" : "lleno", "racha-galon-grande")}
       <div class="racha-rango">${esc(rango.nombre)}</div>
       <div class="racha-num num">${racha} <small>${racha === 1 ? "semana seguida" : "semanas seguidas"}</small></div>
       <div class="racha-galones">${galones}</div>
-      <div class="racha-semana num">${semanaActual.sesiones} de ${CONFIG.sesionesPorSemana} esta semana</div>
+      <div class="racha-semana num">${semanaActual.sesiones} de ${CONFIG.sesionesPorSemana} esta semana${
+        semanaActual.caminatas > 0 ? ` <span class="racha-extra">+ caminata</span>` : ""}</div>
       ${falta}${alerta}
-    </div>`;
+      <div id="logros-en-racha"></div>
+    </button>`;
+  // Tocar la tarjeta del rango lleva al calendario.
+  zona.querySelector(".racha").onclick = () => irA("calendario");
 }
 
 function renderTarjetaPeso() {
@@ -1460,13 +1546,14 @@ function hojaObjetivoPeso() {
   abrirHoja(`
     <h3>Peso objetivo</h3>
     <div class="campo"><label>Kilos</label>
-      <input id="obj-kg" type="number" inputmode="decimal" step="0.5" value="${S.config.pesoObjetivo ?? ""}"></div>
+      <input id="obj-kg" type="text" inputmode="decimal" value="${fmtNumero(S.config.pesoObjetivo, "objetivo")}"></div>
     <div class="hoja-acciones">
       <button id="obj-guardar" class="btn btn-primario btn-grande">Guardar</button>
     </div>`);
-  $("#obj-guardar").onclick = async () => {
-    const v = $("#obj-kg").value ? Number($("#obj-kg").value) : null;
-    await guardarConfig({ pesoObjetivo: v });
+  $("#obj-guardar").onclick = async (ev) => {
+    const ok = await guardarConfig({ pesoObjetivo: leerNumero($("#obj-kg"), "objetivo") },
+      { queHacia: "el peso objetivo", boton: ev.currentTarget });
+    if (!ok) return;
     cerrarHoja(true);
     refrescarVistaActual();
   };
@@ -1488,9 +1575,14 @@ function renderLogros() {
   if (menciones) chips.push(`🔥 Mención de honor × ${menciones}`);
   if (perfectos) chips.push(`Mes perfecto × ${perfectos}`);
   if (hierros) chips.push(`Mes de hierro × ${hierros}`);
+
+  const fila = chips.map((c) => `<span class="logro">${esc(c)}</span>`).join("");
   zona.innerHTML = chips.length
-    ? `<div class="etiqueta">Logros</div><div class="logros-fila">${chips.map((c) => `<span class="logro">${c}</span>`).join("")}</div>`
-    : "";
+    ? `<div class="etiqueta">Logros</div><div class="logros-fila">${fila}</div>` : "";
+  // Copia compacta que la hoja de estilos usa en pantallas bajas, plegándola
+  // dentro de la tarjeta de racha para que el inicio siga entrando entero.
+  const dentro = $("#logros-en-racha");
+  if (dentro) dentro.innerHTML = chips.length ? `<div class="logros-fila">${fila}</div>` : "";
 }
 
 function proximasSesiones(semanaActual) {
@@ -1579,49 +1671,118 @@ function hojaMas() {
 /* ==========================================================================
    AGUA — anillo, registros del día, números que cuentan
    ========================================================================== */
+/* Una sola pantalla: el anillo, los botones, los registros del día uno por uno
+   (borrables) y el lápiz para editar los mililitros ahí mismo. */
 function hojaAgua(desde) {
   const hoy = hoyISO();
+
+  const totalDe = (registros) => registros.reduce((a, r) => a + (r.ml || 0), 0);
+
   const pintar = (primera) => {
     const reg = S.dias.get(hoy);
+    const registros = reg?.aguaRegistros || [];
     const ml = reg?.aguaMl || 0;
     const objetivo = S.config.aguaObjetivoMl || 2000;
-    const registros = reg?.aguaRegistros || [];
     const cumplida = ml >= objetivo;
     const html = `
       <h3>Agua de hoy</h3>
       <div class="agua-detalle">
         <div class="anillo ${cumplida ? "pulso" : ""}">${svgAnillo(ml / objetivo, { tilde: cumplida })}</div>
-        <div class="agua-cifra num" id="agua-cifra" data-valor="${ml}">${ml.toLocaleString("es-AR")}</div>
-        <small class="texto-2">de ${objetivo.toLocaleString("es-AR")} ml</small>
+        <div class="agua-cifra num" id="agua-cifra" data-valor="${ml / 1000}">${fmtLitros(ml)}</div>
+        <small class="texto-2">de ${fmtLitros(objetivo)} L
+          <button id="agua-lapiz-obj" class="lapiz-btn" aria-label="Editar el objetivo">✏️</button></small>
       </div>
       <div class="agua-botones">
-        <button id="agua-botella" class="btn btn-primario btn-grande">+ Botella (${S.config.botellaMl} ml)</button>
-        <button id="agua-vaso" class="btn btn-borde btn-grande">+ Vaso (${S.config.vasoMl} ml)</button>
+        <button id="agua-botella" class="btn btn-primario btn-grande">
+          + Botella<small>${fmtNumero(S.config.botellaMl, "ml")} ml</small></button>
+        <button id="agua-vaso" class="btn btn-borde btn-grande">
+          + Vaso<small>${fmtNumero(S.config.vasoMl, "ml")} ml</small></button>
       </div>
-      <button id="agua-menos" class="btn btn-texto" style="width:100%">Corregir (−${S.config.vasoMl} ml)</button>
-      ${registros.length ? `<ul class="agua-registros">
-        ${registros.slice().reverse().map((r) => `<li><b class="num">${r.ml > 0 ? "+" : ""}${r.ml} ml</b><span>${fmtHora(r.hora)}</span></li>`).join("")}
-      </ul>` : ""}`;
+      <div class="agua-editar">
+        <button id="agua-lapiz" class="btn btn-texto">✏️ Cambiar los mililitros</button>
+      </div>
+      ${registros.length ? `
+        <div class="paso-indicador">Registros de hoy</div>
+        <ul class="agua-registros">
+          ${registros.map((r, i) => `
+            <li>
+              <b class="num">${r.ml > 0 ? "+" : "−"}${fmtNumero(Math.abs(r.ml), "ml")} ml</b>
+              <span>${fmtHora(r.hora)}</span>
+              <button class="btn-icono" data-borrar="${i}" aria-label="Borrar este registro">✕</button>
+            </li>`).reverse().join("")}
+        </ul>`
+        : `<p class="vacio-direccion">Todavía no registraste agua hoy.</p>`}`;
+
     if (primera) abrirHoja(html, { desde });
     else $("#hoja-contenido").innerHTML = html;
-    $("#agua-botella").onclick = () => sumar(S.config.botellaMl);
-    $("#agua-vaso").onclick = () => sumar(S.config.vasoMl);
-    $("#agua-menos").onclick = () => sumar(-S.config.vasoMl);
+
+    $("#agua-botella").onclick = (ev) => sumar(S.config.botellaMl, ev.currentTarget);
+    $("#agua-vaso").onclick = (ev) => sumar(S.config.vasoMl, ev.currentTarget);
+    // Abrir otra hoja cierra esta, así que al volver se reabre entera.
+    $("#agua-lapiz").onclick = () => hojaMedidasAgua(() => hojaAgua());
+    $("#agua-lapiz-obj").onclick = () => hojaMedidasAgua(() => hojaAgua());
+    $$("#hoja-contenido [data-borrar]").forEach((b) => {
+      b.onclick = (ev) => borrar(Number(b.dataset.borrar), ev.currentTarget);
+    });
   };
-  const sumar = async (delta) => {
-    const reg = S.dias.get(hoy);
-    const previo = reg?.aguaMl || 0;
-    const nuevo = Math.max(0, previo + delta);
+
+  const guardar = async (registros, boton, previo) => {
+    const nuevo = Math.max(0, totalDe(registros));
     const objetivo = S.config.aguaObjetivoMl || 2000;
-    const registros = [...(reg?.aguaRegistros || []), { ml: delta, hora: Date.now() }];
     vibrar(previo < objetivo && nuevo >= objetivo ? "confirmar" : "leve");
-    await guardarDia(hoy, { aguaMl: nuevo, aguaRegistros: registros, tipo: reg?.tipo || planDelDia(hoy).tipo });
+    const ok = await guardarDia(hoy, {
+      aguaMl: nuevo, aguaRegistros: registros,
+      tipo: S.dias.get(hoy)?.tipo || planDelDia(hoy).tipo,
+    }, { queHacia: "el agua", boton });
+    if (!ok) return;
     pintar(false);
     const cifra = $("#agua-cifra");
-    if (cifra) { cifra.dataset.valor = String(previo); contarNumero(cifra, nuevo); }
+    if (cifra) {
+      cifra.dataset.valor = String(previo / 1000);
+      contarNumero(cifra, nuevo / 1000, { dec: 1 });
+    }
     if (vistaActual === "inicio") renderInicio();
   };
+
+  const sumar = (delta, boton) => {
+    const reg = S.dias.get(hoy);
+    const registros = [...(reg?.aguaRegistros || []), { ml: delta, hora: Date.now() }];
+    return guardar(registros, boton, reg?.aguaMl || 0);
+  };
+
+  const borrar = (indice, boton) => {
+    const reg = S.dias.get(hoy);
+    const registros = (reg?.aguaRegistros || []).filter((_, i) => i !== indice);
+    return guardar(registros, boton, reg?.aguaMl || 0);
+  };
+
   pintar(true);
+}
+
+/* Los mililitros se editan acá, donde se usan, no en Ajustes. */
+function hojaMedidasAgua(alVolver) {
+  const c = S.config;
+  abrirHoja(`
+    <h3>Medidas de agua</h3>
+    <div class="campo"><label>Botella (ml)</label>
+      <input id="ma-botella" type="text" inputmode="numeric" value="${fmtNumero(c.botellaMl, "ml")}"></div>
+    <div class="campo"><label>Vaso (ml)</label>
+      <input id="ma-vaso" type="text" inputmode="numeric" value="${fmtNumero(c.vasoMl, "ml")}"></div>
+    <div class="campo"><label>Objetivo del día (ml)</label>
+      <input id="ma-objetivo" type="text" inputmode="numeric" value="${fmtNumero(c.aguaObjetivoMl, "ml")}"></div>
+    <div class="hoja-acciones">
+      <button id="ma-guardar" class="btn btn-primario btn-grande">Guardar</button>
+    </div>`);
+  $("#ma-guardar").onclick = async (ev) => {
+    const ok = await guardarConfig({
+      botellaMl: leerNumero($("#ma-botella"), "ml") || 1000,
+      vasoMl: leerNumero($("#ma-vaso"), "ml") || 250,
+      aguaObjetivoMl: leerNumero($("#ma-objetivo"), "ml") || 2000,
+    }, { queHacia: "las medidas de agua", boton: ev.currentTarget });
+    if (!ok) return;
+    cerrarHoja(true);
+    if (alVolver) alVolver();
+  };
 }
 
 /* ==========================================================================
@@ -1970,6 +2131,9 @@ function sesionParaGuardar(s) {
     esPrueba: !!s.esPrueba, inicio: s.inicio, paso: s.paso,
     calorHecho: s.calorHecho || {}, pesoActual: s.pesoActual || {},
     repsActual: s.repsActual || {}, tocada: Date.now(),
+    // El día real en que se está entrenando, que puede no ser el día que cubre
+    // (una pendiente que se recupera, o una sesión que se adelanta).
+    hechoEl: s.hechoEl || s.fecha,
   };
 }
 
@@ -2068,34 +2232,84 @@ function abrirRegistroEntrenamiento(opts = {}) {
   pasoElegirRutina({ ...opts, fecha, rutinaId });
 }
 
-/* Paso 1: qué sesión va a hacer. Un toque si es la de hoy. */
+/* Qué sesiones se pueden cubrir hoy: la de hoy, las pendientes de la semana y
+   las próximas que se pueden adelantar. Adelantar NO es una falta: no consume
+   la recuperación semanal ni el escudo. */
+function sesionesCubribles() {
+  const hoy = hoyISO();
+  const opciones = [];
+  const plan = planDelDia(hoy);
+
+  if (plan.tipo === "entreno" && !sesionRegistrada(hoy)) {
+    opciones.push({ clave: "hoy", cubre: hoy, rutinaId: plan.rutina, titulo: "La de hoy", dato: RUTINAS[plan.rutina].nombre });
+  }
+  for (const p of pendientesDeRecuperar()) {
+    opciones.push({
+      clave: `rec-${p.fecha}`, cubre: p.fecha, rutinaId: p.rutinaId, esRecuperacion: true,
+      titulo: `Recuperar la del ${DIAS_NOMBRE[diaSemanaDe(p.fecha)]}`, dato: RUTINAS[p.rutinaId].nombre,
+    });
+  }
+  // Próximas de la semana, para adelantar
+  const domingo = domingoDe(hoy);
+  for (let f = sumarDias(hoy, 1); f <= domingo; f = sumarDias(f, 1)) {
+    const p = planDelDia(f);
+    if (p.tipo !== "entreno" || sesionRegistrada(f)) continue;
+    opciones.push({
+      clave: `ade-${f}`, cubre: f, rutinaId: p.rutina, adelanta: true,
+      titulo: `Adelantar la del ${DIAS_NOMBRE[diaSemanaDe(f)]}`, dato: RUTINAS[p.rutina].nombre,
+    });
+  }
+  // Siempre queda poder entrenar suelto, sin cubrir nada del plan
+  opciones.push({
+    clave: "suelta", cubre: hoy, rutinaId: plan.rutina || "musculacion",
+    titulo: "Un entrenamiento suelto", dato: "No cubre ningún día del plan",
+  });
+  return opciones;
+}
+
+/* Paso 1: qué sesión cubre. Un toque si es la de hoy. */
 function pasoElegirRutina(ctx) {
   const r = RUTINAS[ctx.rutinaId];
-  const plan = planDelDia(ctx.fecha);
   const esHoy = ctx.fecha === hoyISO();
-  const yaRegistrado = sesionRegistrada(ctx.fecha);
+  const otras = sesionesCubribles().filter((o) => o.cubre !== ctx.fecha || o.rutinaId !== ctx.rutinaId);
 
   abrirHoja(`
     <h3>Registrar entrenamiento</h3>
     <div class="registro-rutina">
       <div class="etiqueta">${esHoy ? "Hoy" : esc(fmtFechaLarga(ctx.fecha))}</div>
       <div class="registro-nombre">${esc(r.nombre)}</div>
-      <div class="dato">${esc(resumenRutina(ctx.rutinaId))}${plan.tipo === "descanso" ? " · hoy tocaba descanso" : ""}</div>
+      <div class="dato">${esc(resumenRutina(ctx.rutinaId))}</div>
     </div>
-    ${yaRegistrado ? `<p class="texto-2">Este día ya está registrado. Si entrenás igual,
-      se suma al mismo día.</p>` : ""}
-    ${ctx.esRecuperacion ? `<p class="texto-2">Vas a recuperar la sesión del
-      ${esc(fmtFechaLarga(ctx.fechaOriginal))}.</p>` : ""}
+    ${ctx.esRecuperacion ? `<p class="texto-2">Recuperás la sesión del
+      ${esc(fmtFechaLarga(ctx.fechaOriginal || ctx.fecha))}. No gasta el escudo.</p>` : ""}
+    ${ctx.adelanta ? `<p class="texto-2">Adelantás la sesión del
+      ${esc(fmtFechaLarga(ctx.fecha))}. Adelantar no es una falta.</p>` : ""}
     <div class="hoja-acciones">
       <button id="reg-seguir" class="btn btn-rojo btn-grande">Continuar</button>
-      <button id="reg-cambiar" class="btn btn-texto">Cambiar de rutina</button>
-    </div>`);
+      <button id="reg-cambiar" class="btn btn-texto">Cambiar de rutina (${esc(RUTINAS[ctx.rutinaId === "musculacion" ? "intervalos" : "musculacion"].nombre)})</button>
+    </div>
+    ${otras.length ? `
+      <div class="paso-indicador">O cubrir otra sesión</div>
+      <div class="accion-lista">
+        ${otras.map((o) => `<button class="accion-item" data-cubre="${o.clave}">
+          <span>${esc(o.titulo)}<span class="dato">${esc(o.dato)}</span></span></button>`).join("")}
+      </div>` : ""}`);
 
   $("#reg-seguir").onclick = () => pasoFoto(ctx);
-  $("#reg-cambiar").onclick = () => {
-    const otra = ctx.rutinaId === "musculacion" ? "intervalos" : "musculacion";
-    pasoElegirRutina({ ...ctx, rutinaId: otra });
-  };
+  $("#reg-cambiar").onclick = () => pasoElegirRutina({
+    ...ctx, rutinaId: ctx.rutinaId === "musculacion" ? "intervalos" : "musculacion",
+  });
+  $$("#hoja-contenido [data-cubre]").forEach((b) => {
+    b.onclick = () => {
+      const o = sesionesCubribles().find((x) => x.clave === b.dataset.cubre);
+      if (!o) return;
+      pasoElegirRutina({
+        fecha: o.cubre, rutinaId: o.rutinaId,
+        esRecuperacion: !!o.esRecuperacion, fechaOriginal: o.esRecuperacion ? o.cubre : null,
+        adelanta: !!o.adelanta,
+      });
+    };
+  });
 }
 
 /* Paso 2: la foto. Cámara y galería valen igual; sin foto es el desvío. */
@@ -2186,6 +2400,7 @@ async function iniciarEntrenamiento({ fecha, rutinaId, esRecuperacion, fechaOrig
     fecha, rutinaId,
     esRecuperacion: !!esRecuperacion,
     fechaOriginal: fechaOriginal || null,
+    hechoEl: hoyISO(),
     esPrueba,
     inicio, paso: 0,
     cola: armarCola(rutinaId),
@@ -2205,6 +2420,8 @@ async function iniciarEntrenamiento({ fecha, rutinaId, esRecuperacion, fechaOrig
     cerradaAutomatica: false,
   };
   if (esRecuperacion && fechaOriginal) cambios.recuperaDe = fechaOriginal;
+  // Si cubre un día que no es hoy, queda constancia de cuándo se hizo de verdad.
+  if (fecha !== S.sesion.hechoEl) cambios.hechoEl = S.sesion.hechoEl;
 
   if (foto) {
     cambios.tieneFoto = true;
@@ -2268,7 +2485,10 @@ async function cerrarSesionAutomatica(fecha) {
 async function cerrarSesionesViejas() {
   const hoy = hoyISO();
   for (const [fecha, reg] of [...S.dias]) {
-    if (reg?.sesion?.abierta && fecha < hoy) await cerrarSesionAutomatica(fecha);
+    // Se mide contra el día en que se entrenó de verdad, no contra el que
+    // cubre: recuperar el lunes un miércoles no es una sesión vieja.
+    const dia = reg?.sesion?.hechoEl || fecha;
+    if (reg?.sesion?.abierta && dia < hoy) await cerrarSesionAutomatica(fecha);
   }
 }
 
@@ -2502,7 +2722,7 @@ function renderEjercicio(cont, id) {
 
       <div class="peso-control">
         <button class="btn-paso" id="peso-menos" aria-label="Bajar peso">−</button>
-        <input class="peso-input" id="peso-input" type="number" inputmode="decimal" step="${e.pesoPaso}" value="${s.pesoActual[id]}">
+        <input class="peso-input" id="peso-input" type="text" inputmode="decimal" value="${fmtNumero(s.pesoActual[id], "carga")}">
         <button class="btn-paso" id="peso-mas" aria-label="Subir peso">+</button>
       </div>
       <div class="centrado peso-unidad">kg · pasos de ${e.pesoPaso}
@@ -2544,9 +2764,9 @@ function renderEjercicio(cont, id) {
 
   const inputPeso = $("#peso-input");
   const cambiarPeso = (delta) => {
-    const v = Math.max(0, (Number(inputPeso.value) || 0) + delta);
-    inputPeso.value = Math.round(v * 100) / 100;
-    s.pesoActual[id] = Number(inputPeso.value);
+    const v = Math.max(0, (leerNumero(inputPeso, "carga") ?? 0) + delta);
+    s.pesoActual[id] = Math.round(v * 10) / 10;
+    inputPeso.value = fmtNumero(s.pesoActual[id], "carga");
     guardarSesion();
   };
   $("#peso-menos").onclick = () => cambiarPeso(-e.pesoPaso);
@@ -2652,10 +2872,10 @@ function hojaDiscos(pesoInicial) {
   abrirHoja(`
     <h3>Calculadora de discos</h3>
     <div class="campo"><label>Peso total (kg)</label>
-      <input id="discos-total" type="number" inputmode="decimal" value="${pesoInicial || ""}"></div>
+      <input id="discos-total" type="text" inputmode="decimal" value="${pesoInicial ? fmtNumero(pesoInicial, "carga") : ""}"></div>
     <div id="discos-out" class="discos-resultado"></div>`);
   const calcular = () => {
-    const total = Number($("#discos-total").value) || 0;
+    const total = leerNumero($("#discos-total"), "carga") || 0;
     const porLado = total / 2;
     const discos = [20, 15, 10, 5, 2.5, 1.25];
     let resto = porLado;
@@ -3042,7 +3262,9 @@ function renderCalendario() {
 function renderHeatmap() {
   const hoy = hoyISO();
   const piso = pisoFecha();
-  const inicio = lunesDe(sumarDias(hoy, -364));
+  // Arranca en la semana en que empezó a usar la app: antes no hay historia
+  // que mostrar, y un año de puntos grises solo ensucia.
+  const inicio = lunesDe(piso);
   const menciones = new Set(
     [...S.semanas.values()].filter((s) => s.mencionHonor).map((s) => s.clave));
   let html = `<div class="heatmap-grilla">`;
@@ -3146,14 +3368,14 @@ function hojaEditarSeries(fecha) {
       <p class="texto-2">${esc(fmtFechaLarga(fecha))}</p>
       <div class="campo"><label>Vueltas por bloque</label>
         <div class="retro-vueltas">
-          ${[0, 1, 2, 3].map((i) => `<input data-ed-v="${i}" type="number" inputmode="decimal"
-            step="0.5" min="0" value="${v[i] || 0}">`).join("")}
+          ${[0, 1, 2, 3].map((i) => `<input data-ed-v="${i}" type="text" inputmode="decimal"
+            value="${fmtNumero(v[i] || 0, "carga")}">`).join("")}
         </div></div>
       <div class="hoja-acciones">
         <button id="ed-guardar" class="btn btn-primario btn-grande">Guardar</button>
       </div>`);
     $("#ed-guardar").onclick = async (ev) => {
-      const vueltas = $$("[data-ed-v]").map((i) => Number(i.value) || 0);
+      const vueltas = $$("[data-ed-v]").map((i) => leerNumero(i, "carga") || 0);
       const ok = await guardarDia(fecha, { vueltas },
         { queHacia: "las vueltas", boton: ev.currentTarget });
       if (!ok) return;
@@ -3174,11 +3396,11 @@ function hojaEditarSeries(fecha) {
         ${ss.map((x, i) => `
           <div class="ed-serie">
             <span class="dato">Serie ${i + 1}</span>
-            <input data-ed="${e.id}" data-i="${i}" data-campo="peso" type="number"
-              inputmode="decimal" step="${e.pesoPaso}" min="0" value="${x?.peso ?? ""}" aria-label="Peso">
+            <input data-ed="${e.id}" data-i="${i}" data-campo="peso" type="text"
+              inputmode="decimal" value="${fmtNumero(x?.peso, "carga")}" aria-label="Peso">
             <span class="dato">kg ×</span>
-            <input data-ed="${e.id}" data-i="${i}" data-campo="reps" type="number"
-              inputmode="numeric" step="1" min="0" value="${x?.reps ?? ""}" aria-label="Repeticiones">
+            <input data-ed="${e.id}" data-i="${i}" data-campo="reps" type="text"
+              inputmode="numeric" value="${x?.reps ?? ""}" aria-label="Repeticiones">
           </div>`).join("")}
       </div>`;
   }).join("");
@@ -3203,8 +3425,9 @@ function hojaEditarSeries(fecha) {
     for (const inp of $$("[data-ed]")) {
       const id = inp.dataset.ed, i = Number(inp.dataset.i);
       if (!series[id]?.[i]) continue;
-      const valor = Number(inp.value);
-      if (Number.isFinite(valor)) series[id][i][inp.dataset.campo] = valor;
+      const campo = inp.dataset.campo;
+      const valor = leerNumero(inp, campo === "reps" ? "ml" : "carga");
+      if (valor != null) series[id][i][campo] = valor;
     }
     const ok = await guardarDia(fecha, { series },
       { queHacia: "las series", boton: ev.currentTarget });
@@ -3225,14 +3448,13 @@ function hojaRetro(fecha) {
     campos = MUSCULACION.bloques.flatMap((b) => b.ejercicios).map((e) => {
       const previa = laVezPasada(e.id);
       return `<div class="campo"><label>${esc(e.nombre)} — peso (kg)</label>
-        <input data-retro-ej="${e.id}" type="number" inputmode="decimal" step="${e.pesoPaso}"
-          value="${previa?.peso ?? e.pesoSugerido ?? ""}"></div>`;
+        <input data-retro-ej="${e.id}" type="text" inputmode="decimal"
+          value="${fmtNumero(previa?.peso ?? e.pesoSugerido, "carga")}"></div>`;
     }).join("");
   } else {
     campos = `<div class="campo"><label>Vueltas por bloque (4 bloques)</label>
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
-        ${[0, 1, 2, 3].map((i) => `<input data-retro-v="${i}" type="number" inputmode="decimal" step="0.5" value="3"
-          style="min-height:48px;border:1px solid var(--separador);border-radius:14px;text-align:center;font-size:17px;background:var(--superficie)">`).join("")}
+      <div class="retro-vueltas">
+        ${[0, 1, 2, 3].map((i) => `<input data-retro-v="${i}" type="text" inputmode="decimal" value="3">`).join("")}
       </div></div>`;
   }
 
@@ -3274,14 +3496,13 @@ function hojaRetro(fecha) {
     if (rutinaId === "musculacion") {
       dia.series = {};
       $$("[data-retro-ej]").forEach((inp) => {
-        const id = inp.dataset.retroEj;
-        const peso = Number(inp.value);
-        if (!peso && peso !== 0) return;
-        const e = ejercicioPorId(id);
-        dia.series[id] = Array.from({ length: e.series }, () => ({ peso, reps: e.reps, hecha: true }));
+        const peso = leerNumero(inp, "carga");
+        if (peso == null) return;
+        const e = ejercicioPorId(inp.dataset.retroEj);
+        dia.series[e.id] = Array.from({ length: e.series }, () => ({ peso, reps: e.reps, hecha: true }));
       });
     } else {
-      dia.vueltas = $$("[data-retro-v]").map((inp) => Number(inp.value) || 0);
+      dia.vueltas = $$("[data-retro-v]").map((inp) => leerNumero(inp, "carga") || 0);
     }
     if (fotoRetro) { dia.tieneFoto = true; dia.fotoAgregadaEl = hoyISO(); }
     const ok = await guardarDia(fecha, dia, { queHacia: "el día", boton: ev.currentTarget });
@@ -3408,9 +3629,21 @@ function abrirFicha(fecha, desdeEl) {
     ${cuerpo}
     ${indicadoresDiaHTML(fecha)}
     ${graficos}
-    ${reg.tieneFoto ? `<div class="ficha-seccion">Foto del día</div><div id="ficha-foto" class="dato">Cargando…</div>` : ""}
-    ${reg.motivoSinFoto ? `<div class="dato mt">Sin foto: ${esc(reg.motivoSinFoto)}</div>` : ""}
+    <div class="ficha-seccion">Foto del día</div>
+    ${reg.tieneFoto
+      ? `<div id="ficha-foto" class="dato">Cargando…</div>`
+      : `<p class="vacio-direccion">Este día quedó sin foto.</p>`}
+    <div class="ficha-acciones">
+      <button id="fic-series" class="btn btn-borde btn-grande">Corregir pesos y repeticiones</button>
+      <button id="fic-parte" class="btn btn-borde btn-grande">Completar hambre, cansancio y comentario</button>
+      ${reg.tieneFoto ? "" : `<button id="fic-foto" class="btn btn-borde btn-grande">Agregar la foto</button>`}
+    </div>
   `, { desde: desdeEl });
+
+  $("#fic-series").onclick = () => hojaEditarSeries(fecha);
+  $("#fic-parte").onclick = () => hojaCompletarCierre(fecha);
+  const bFoto = $("#fic-foto");
+  if (bFoto) bFoto.onclick = () => hojaAgregarFoto(fecha);
 
   // Dibujar los gráficos una vez montados
   requestAnimationFrame(() => {
@@ -3430,28 +3663,46 @@ function abrirFicha(fecha, desdeEl) {
   }
 }
 
+/* La escala del 1 al 5 se ve entera con el valor marcado, no como número suelto.
+   Si quedó vacía (sesión cerrada sola), se muestra el hueco, no se esconde. */
+function escalaHTML(nombre, valor) {
+  const puntos = [1, 2, 3, 4, 5].map((n) =>
+    `<span class="esc-punto ${valor === n ? "sel" : ""}">${n}</span>`).join("");
+  return `
+    <div class="ficha-escala ${valor ? "" : "vacia"}">
+      <span class="dato">${nombre}</span>
+      <span class="esc-puntos">${puntos}</span>
+      ${valor ? "" : `<span class="dato">sin cargar</span>`}
+    </div>`;
+}
+
 function indicadoresDiaHTML(fecha) {
   const reg = S.dias.get(fecha);
-  const chips = [];
-  if (reg?.aguaMl) chips.push(`Agua ${reg.aguaMl} ml`);
-  if (reg?.hambre) chips.push(`Hambre ${reg.hambre}/5`);
-  if (reg?.cansancio) chips.push(`Cansancio ${reg.cansancio}/5`);
+  const registrado = sesionRegistrada(fecha);
   const pesaje = S.pesajes.get(fecha);
-  if (pesaje) chips.push(`Peso ${pesaje.pesoKg} kg`);
-  return chips.length
-    ? `<div class="ficha-seccion">Indicadores</div>
-       <div class="ficha-indicadores">${chips.map((c) => `<span class="logro num">${esc(c)}</span>`).join("")}</div>`
-    : "";
+  const objetivo = S.config.aguaObjetivoMl || 2000;
+  const ml = reg?.aguaMl || 0;
+
+  return `
+    <div class="ficha-seccion">Cómo estuviste</div>
+    ${escalaHTML("Hambre", reg?.hambre)}
+    ${escalaHTML("Cansancio", reg?.cansancio)}
+    <div class="dia-detalle-fila"><span>Agua del día</span>
+      <span class="num">${fmtNumero(ml / 1000, "carga")} de ${fmtNumero(objetivo / 1000, "carga")} L</span></div>
+    ${pesaje ? `<div class="dia-detalle-fila"><span>Peso corporal</span>
+      <span class="num">${fmtNumero(pesaje.pesoKg, "peso")} kg</span></div>` : ""}
+    ${reg?.comentario ? `<p class="mt">${esc(reg.comentario)}</p>`
+      : (registrado ? `<p class="dato mt">Sin comentario.</p>` : "")}`;
 }
 
 /* ==========================================================================
    PROGRESO — Peso + Historial
    ========================================================================== */
 function renderProgreso() {
-  const seg = localStorage.getItem("progresoSeg") || "peso";
+  const seg = localStorage.getItem("progresoSeg") || "entreno";
   $$("#progreso-segmentos button").forEach((b) => b.classList.toggle("sel", b.dataset.seg === seg));
   $("#progreso-peso").classList.toggle("oculta", seg !== "peso");
-  $("#progreso-historial").classList.toggle("oculta", seg !== "historial");
+  $("#progreso-entreno").classList.toggle("oculta", seg !== "entreno");
   if (seg === "peso") renderPeso();
   else renderHistorial();
 }
@@ -3557,23 +3808,27 @@ function hojaPesaje() {
   abrirHoja(`
     <h3>Pesaje</h3>
     <div class="campo"><label>Peso (kg)</label>
-      <input id="pes-kg" type="number" inputmode="decimal" step="0.1" value="${previo?.pesoKg ?? ""}"></div>
-    <div class="campo"><label>Foto de la balanza</label>
-      <div class="foto-zona" id="pes-balanza-zona" style="border-color:var(--separador);color:var(--texto2)">${previo?.tieneBalanza ? "Foto ya guardada · tocá para cambiar" : "Tocá para sacar la foto"}</div>
-      <input id="pes-balanza" type="file" accept="image/*" capture="environment" style="display:none"></div>
-    <div class="campo"><label>Foto del espejo</label>
-      <div class="foto-zona" id="pes-espejo-zona" style="border-color:var(--separador);color:var(--texto2)">${previo?.tieneEspejo ? "Foto ya guardada · tocá para cambiar" : "Tocá para sacar la foto"}</div>
-      <input id="pes-espejo" type="file" accept="image/*" capture="environment" style="display:none"></div>
+      <input id="pes-kg" type="text" inputmode="decimal" placeholder="84,250"
+        value="${fmtNumero(previo?.pesoKg, "peso")}"></div>
+    ${["balanza", "espejo"].map((cual) => `
+    <div class="campo"><label>Foto de la ${cual === "balanza" ? "balanza" : "del espejo"}</label>
+      <div class="foto-zona" id="pes-${cual}-zona">${previo?.[cual === "balanza" ? "tieneBalanza" : "tieneEspejo"]
+        ? "Foto ya guardada · tocá para cambiar" : "Sin foto"}</div>
+      <input id="pes-${cual}-camara" type="file" accept="image/*" capture="environment" hidden>
+      <input id="pes-${cual}-galeria" type="file" accept="image/*" hidden>
+      <div class="foto-botones">
+        <button id="pes-${cual}-btn-camara" class="btn btn-borde btn-medio">Sacar foto</button>
+        <button id="pes-${cual}-btn-galeria" class="btn btn-borde btn-medio">Elegir de galería</button>
+      </div></div>`).join("")}
     <div class="hoja-acciones">
       <button id="pes-guardar" class="btn btn-primario btn-grande">Guardar pesaje</button>
     </div>`);
 
   const fotos = {};
   for (const cual of ["balanza", "espejo"]) {
-    const zona = $(`#pes-${cual}-zona`), input = $(`#pes-${cual}`);
-    zona.onclick = () => input.click();
-    input.onchange = async (ev) => {
-      const f = ev.target.files[0];
+    const zona = $(`#pes-${cual}-zona`);
+    const tomar = async (ev) => {
+      const f = ev.target.files?.[0];
       if (!f) return;
       zona.textContent = "Comprimiendo…";
       try {
@@ -3581,19 +3836,28 @@ function hojaPesaje() {
         zona.innerHTML = `<img src="${fotos[cual]}" alt="">`;
       } catch (_) { zona.textContent = "No se pudo procesar"; }
     };
+    $(`#pes-${cual}-camara`).onchange = tomar;
+    $(`#pes-${cual}-galeria`).onchange = tomar;
+    $(`#pes-${cual}-btn-camara`).onclick = () => $(`#pes-${cual}-camara`).click();
+    $(`#pes-${cual}-btn-galeria`).onclick = () => $(`#pes-${cual}-galeria`).click();
+    zona.onclick = () => $(`#pes-${cual}-galeria`).click();
   }
 
-  $("#pes-guardar").onclick = async () => {
-    const kg = Number($("#pes-kg").value);
-    if (!kg) { $("#pes-kg").focus(); return; }
+  $("#pes-guardar").onclick = async (ev) => {
+    const kg = leerNumero($("#pes-kg"), "peso");
+    if (!kg) { $("#pes-kg").focus(); toast("Falta el peso.", "toast-alerta"); return; }
     const data = {
       fecha: hoy, pesoKg: kg, hora: Date.now(),
       tieneBalanza: !!(fotos.balanza || previo?.tieneBalanza),
       tieneEspejo: !!(fotos.espejo || previo?.tieneEspejo),
     };
-    await setDoc(refs.pesaje(hoy), data, { merge: true });
-    if (fotos.balanza) await setDoc(refs.pesajeMedia(hoy, "balanza"), { data: fotos.balanza, hora: Date.now() });
-    if (fotos.espejo) await setDoc(refs.pesajeMedia(hoy, "espejo"), { data: fotos.espejo, hora: Date.now() });
+    const ok = await escribir("el pesaje",
+      () => setDoc(refs.pesaje(hoy), data, { merge: true }), ev.currentTarget);
+    if (!ok) return;
+    if (fotos.balanza) await escribir("la foto de la balanza",
+      () => setDoc(refs.pesajeMedia(hoy, "balanza"), { data: fotos.balanza, hora: Date.now() }));
+    if (fotos.espejo) await escribir("la foto del espejo",
+      () => setDoc(refs.pesajeMedia(hoy, "espejo"), { data: fotos.espejo, hora: Date.now() }));
     S.pesajes.set(hoy, data);
     cerrarHoja(true);
     vibrar("confirmar");
@@ -3659,12 +3923,35 @@ function progresionDe(id) {
   return puntos;
 }
 
+/* Kilos movidos por semana, contando las dos rutinas. */
+function volumenPorSemana() {
+  const porSemana = new Map();
+  for (const f of [...S.dias.keys()].sort()) {
+    const reg = regReal(f);
+    if (!reg || !sesionRegistrada(f)) continue;
+    const vol = volumenSesion(reg);
+    if (!vol) continue;
+    const c = claveSemana(f);
+    porSemana.set(c, (porSemana.get(c) || 0) + vol);
+  }
+  return [...porSemana.entries()].map(([clave, kg]) => ({ clave, kg }));
+}
+
 function renderHistorial() {
-  const cont = $("#progreso-historial");
+  const cont = $("#progreso-entreno");
   const ejercicios = [...MUSCULACION.bloques.flatMap((b) => b.ejercicios), ...INTERVALOS.circuito];
   const sel = localStorage.getItem("histEj") || "prensa-pos1";
 
+  const semanas = volumenPorSemana();
+  const totalKg = semanas.reduce((a, s) => a + s.kg, 0);
+  const sesiones = [...S.dias.keys()].filter((f) => sesionRegistrada(f)).length;
+
   cont.innerHTML = `
+    <div class="peso-resumen">
+      <div class="peso-tarjeta"><strong class="num">${fmtNumero(sesiones, "ml")}</strong><span>Sesiones</span></div>
+      <div class="peso-tarjeta"><strong class="num">${fmtNumero(Math.round(totalKg / 1000), "ml")}</strong><span>Toneladas</span></div>
+      <div class="peso-tarjeta"><strong class="num">${fmtNumero(semanas.length ? Math.round(totalKg / semanas.length) : 0, "ml")}</strong><span>kg / semana</span></div>
+    </div>
     <div class="seccion-titulo">Progresión de carga</div>
     <div class="campo"><select id="hist-ej">
       ${ejercicios.map((e) => `<option value="${e.id}" ${e.id === sel ? "selected" : ""}>${esc(e.nombre)}</option>`).join("")}
@@ -3715,10 +4002,45 @@ function renderPRs(caja) {
       for (const x of ss)
         if (x.hecha && (!max[id] || x.peso > max[id].peso)) max[id] = { peso: x.peso, fecha: f };
   }
-  caja.innerHTML = ejercicios.filter((e) => max[e.id]).map((e) => `
-    <div class="pr-fila"><span>${esc(e.nombre)}</span>
-      <strong class="num">${max[e.id].peso} kg <span class="dato" style="font-weight:400">· ${fmtFechaCorta(max[e.id].fecha)}</span></strong></div>`).join("")
+  const conRecord = ejercicios.filter((e) => max[e.id]);
+  caja.innerHTML = conRecord.map((e) => `
+    <button class="pr-fila" data-pr="${e.id}"><span>${esc(e.nombre)}</span>
+      <strong class="num">${fmtNumero(max[e.id].peso, "carga")} kg
+        <span class="dato" style="font-weight:400">· ${fmtFechaCorta(max[e.id].fecha)}</span></strong></button>`).join("")
     || `<p class="vacio-direccion">Todavía no hay récords. El primero cae esta semana.</p>`;
+  caja.querySelectorAll("[data-pr]").forEach((b) => {
+    b.onclick = () => hojaEjercicio(b.dataset.pr, max[b.dataset.pr]);
+  });
+}
+
+/* Ficha de un ejercicio: el dibujo, las indicaciones y su historial. */
+function hojaEjercicio(id, record) {
+  const e = ejercicioPorId(id);
+  if (!e) return;
+  const puntos = progresionDe(id);
+  const previa = laVezPasada(id);
+
+  abrirHoja(`
+    <h3>${esc(e.nombre)}</h3>
+    ${e.subtitulo ? `<p class="texto-2">${esc(e.subtitulo)}</p>` : ""}
+    <img class="ej-img ej-img-clara" src="img/ejercicios/${e.img}" alt="">
+    ${record ? `<div class="dia-detalle-fila"><span>Récord</span>
+      <span class="num">${fmtNumero(record.peso, "carga")} kg · ${fmtFechaLarga(record.fecha)}</span></div>` : ""}
+    ${previa ? `<div class="dia-detalle-fila"><span>La vez pasada</span>
+      <span class="num">${fmtNumero(previa.peso, "carga")} kg × ${previa.reps}</span></div>` : ""}
+    <div class="dia-detalle-fila"><span>Plan</span>
+      <span class="num">${e.series ? `${e.series} × ${e.reps}` : `${e.reps} reps`}${
+        e.peso ? ` · ${fmtNumero(e.peso, "carga")} kg${e.porLado ? " por lado" : ""}` : ""}</span></div>
+    ${(e.cues || []).length ? `<div class="ficha-seccion">Cómo se hace</div>
+      <ul class="ficha-cues">${e.cues.map((c) => `<li>${esc(c)}</li>`).join("")}</ul>` : ""}
+    <div class="ficha-seccion">Historial</div>
+    ${puntos.length >= 2
+      ? `<canvas id="ej-canvas" class="grafico"></canvas>`
+      : `<p class="vacio-direccion">Con dos sesiones de este ejercicio aparece la curva.</p>`}`);
+
+  if (puntos.length >= 2) {
+    requestAnimationFrame(() => dibujarGraficoPeso($("#ej-canvas"), puntos, null));
+  }
 }
 
 async function renderAlbum() {
@@ -3754,25 +4076,41 @@ function cargarJsPDF() {
 }
 
 /* jsPDF no acepta WebP: se convierte a JPEG por canvas y se cachea */
+/* El `load` de una <img> avisa que el archivo llegó, pero NO que los píxeles
+   estén listos para dibujar: con WebP el canvas salía en blanco y el PDF sin
+   dibujos. `decode()` sí garantiza que la imagen está descodificada. Se espera
+   eso antes de dibujar, con `load` de respaldo para navegadores viejos. */
 const cacheJPEG = new Map();
-function imagenJPEG(nombre) {
-  if (cacheJPEG.has(nombre)) return Promise.resolve(cacheJPEG.get(nombre));
-  return new Promise((resolver) => {
+
+async function imagenJPEG(nombre) {
+  if (cacheJPEG.has(nombre)) return cacheJPEG.get(nombre);
+  try {
     const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
-      const ctx = canvas.getContext("2d");
-      ctx.fillStyle = "#fff";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, 0, 0);
-      const out = { data: canvas.toDataURL("image/jpeg", 0.85), w: img.naturalWidth, h: img.naturalHeight };
-      cacheJPEG.set(nombre, out);
-      resolver(out);
-    };
-    img.onerror = () => resolver(null);
     img.src = `img/ejercicios/${nombre}`;
-  });
+    if (img.decode) {
+      await img.decode();
+    } else {
+      await new Promise((ok, mal) => { img.onload = ok; img.onerror = mal; });
+    }
+    const ancho = img.naturalWidth, alto = img.naturalHeight;
+    if (!ancho || !alto) throw new Error("imagen sin dimensiones");
+
+    const canvas = document.createElement("canvas");
+    canvas.width = ancho; canvas.height = alto;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#fff";                 // el JPEG no tiene transparencia
+    ctx.fillRect(0, 0, ancho, alto);
+    ctx.drawImage(img, 0, 0);
+
+    const data = canvas.toDataURL("image/jpeg", 0.85);
+    if (!data.startsWith("data:image/jpeg")) throw new Error("el canvas no dio JPEG");
+    const out = { data, w: ancho, h: alto };
+    cacheJPEG.set(nombre, out);
+    return out;
+  } catch (e) {
+    console.warn("no se pudo convertir", nombre, e);
+    return null;
+  }
 }
 
 function lineasResumenAcumulado() {
@@ -3995,31 +4333,9 @@ function imagenesDeRutinas() {
 }
 
 function renderAjustes() {
-  const c = S.config;
-  const tema = localStorage.getItem("tema") || "auto";
   const cont = $("#ajustes-contenido");
   cont.innerHTML = `
-    <div class="config-fila"><span>Tema</span>
-      <span class="segmentos" id="cfg-tema">
-        <button data-t="auto" class="${tema === "auto" ? "sel" : ""}">Auto</button>
-        <button data-t="light" class="${tema === "light" ? "sel" : ""}">Claro</button>
-        <button data-t="dark" class="${tema === "dark" ? "sel" : ""}">Oscuro</button>
-      </span></div>
-    <div class="config-fila"><span>Botella (ml)</span>
-      <input id="cfg-botella" type="number" inputmode="numeric" value="${c.botellaMl}"></div>
-    <div class="config-fila"><span>Vaso (ml)</span>
-      <input id="cfg-vaso" type="number" inputmode="numeric" value="${c.vasoMl}"></div>
-    <div class="config-fila"><span>Objetivo de agua (ml)</span>
-      <input id="cfg-agua" type="number" inputmode="numeric" value="${c.aguaObjetivoMl}"></div>
-    <div class="config-fila"><span>Descanso entre series (seg)</span>
-      <input id="cfg-descanso" type="number" inputmode="numeric" value="${c.descansoSeg || CONFIG.descansoEntreSeriesSeg}"></div>
-    <div class="config-fila"><span>Peso objetivo (kg)</span>
-      <input id="cfg-objetivo" type="number" inputmode="decimal" step="0.1" value="${c.pesoObjetivo ?? ""}"></div>
-    <button id="cfg-guardar" class="btn btn-primario btn-grande mt">Guardar</button>
-
-    <div class="seccion-titulo">Modo prueba</div>
-    <div class="config-fila"><span>Modo prueba<small>Timers a 10 s · las sesiones no cuentan</small></span>
-      <span class="interruptor"><input id="cfg-prueba" type="checkbox" ${modoPrueba() ? "checked" : ""}><i></i></span></div>
+    <div class="seccion-titulo">Comprobaciones</div>
     <div class="hoja-acciones" style="margin-top:8px">
       <button id="cfg-campana" class="btn btn-borde btn-grande">Probar campana</button>
       <button id="cfg-campana-bloqueo" class="btn btn-borde btn-grande">Probar campana con pantalla apagada</button>
@@ -4038,28 +4354,6 @@ function renderAjustes() {
     <p class="dato centrado mt">Rutinas v${RUTINAS_VERSION} · fecha de inicio ${fmtFechaCorta(pisoFecha())}
       <br>Día calendario según ${TZ} · hoy es ${hoyISO()}</p>`;
 
-  $("#cfg-tema").querySelectorAll("button").forEach((b) => {
-    b.onclick = () => {
-      aplicarTema(b.dataset.t, true);
-      $("#cfg-tema").querySelectorAll("button").forEach((x) => x.classList.toggle("sel", x === b));
-    };
-  });
-  $("#cfg-guardar").onclick = async () => {
-    await guardarConfig({
-      botellaMl: Number($("#cfg-botella").value) || 1000,
-      vasoMl: Number($("#cfg-vaso").value) || 250,
-      aguaObjetivoMl: Number($("#cfg-agua").value) || 2000,
-      descansoSeg: Number($("#cfg-descanso").value) || 90,
-      pesoObjetivo: $("#cfg-objetivo").value ? Number($("#cfg-objetivo").value) : null,
-    });
-    toast("Configuración guardada.");
-  };
-  $("#cfg-prueba").onchange = (e) => {
-    localStorage.setItem("modoPrueba", e.target.checked ? "1" : "0");
-    toast(e.target.checked
-      ? "Modo prueba activo: timers a 10 s, las sesiones no cuentan."
-      : "Modo prueba desactivado.");
-  };
   $("#cfg-campana").onclick = () => { desbloquearAudio(); setTimeout(sonarCampana, 150); };
   $("#cfg-campana-bloqueo").onclick = async (ev) => {
     ev.currentTarget.disabled = true;
@@ -4121,6 +4415,7 @@ function renderAjustes() {
    ========================================================================== */
 $("#btn-login").addEventListener("click", entrar);
 $("#btn-entreno-salir").addEventListener("click", salirDeSesion);
+$("#btn-ajustes").addEventListener("click", () => irA("ajustes"));
 $("#bd-menos").addEventListener("click", () => ajustarDescanso(-15));
 $("#bd-mas").addEventListener("click", () => ajustarDescanso(15));
 $("#bd-reiniciar").addEventListener("click", reiniciarDescanso);
