@@ -257,3 +257,17 @@ const SEED = [
     },
   },
 ];
+
+/* ==========================================================================
+   FERIADOS — completar a mano.
+   Formato: "YYYY-MM-DD", uno por línea, entre comillas y separados por coma.
+   Ejemplo:
+     const FERIADOS = [
+       "2026-12-25",
+       "2027-01-01",
+     ];
+   Los días listados acá cuentan como descanso: no se pintan de rojo ni
+   descuentan de la semana. Mientras esté vacío, los feriados se marcan
+   desde la app con el botón de causa mayor.
+   ========================================================================== */
+const FERIADOS = [];

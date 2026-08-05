@@ -1,0 +1,26 @@
+REGLAS DE FIRESTORE — BLOQUE A AGREGAR
+=======================================
+
+NO reemplaces tus reglas actuales. Este bloque se AGREGA adentro del
+match /databases/{database}/documents que ya existe, sin borrar ni
+modificar nada de lo que hay (las reglas de Mis Finanzas quedan igual).
+
+Pasos:
+1. Firebase Console → Firestore Database → Rules.
+2. Buscá la línea:  match /databases/{database}/documents {
+3. Pegá el bloque de abajo ADENTRO de esas llaves, al mismo nivel que
+   los otros "match" que ya tenés.
+4. Publish.
+5. Abrí Mis Finanzas y cargá un gasto de prueba para confirmar que
+   sigue funcionando.
+
+----------------------------------------------------------------------
+    // --- Mi Entrenador: cada usuario solo accede a sus propios datos ---
+    match /entrenador/{uid}/{documento=**} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+----------------------------------------------------------------------
+
+Eso es todo. Un solo bloque: cubre config, dias, pesajes, semanas y las
+subcolecciones media, porque el comodín {documento=**} abarca todo lo
+que cuelga de entrenador/{uid}.

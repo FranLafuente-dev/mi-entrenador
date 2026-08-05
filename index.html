@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Mi Entrenador</title>
+
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+  <link rel="manifest" href="manifest.json">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Mi Entrenador">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#0A0A0B">
+
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- ============ LOGIN ============ -->
+  <section id="vista-login" class="vista oculta">
+    <div class="login-caja">
+      <img src="icons/icon-192.png" alt="" class="login-icono">
+      <h1>Mi Entrenador</h1>
+      <p class="login-sub">Presentate, soldado.</p>
+      <button id="btn-login" class="btn btn-primario btn-grande">Entrar con Google</button>
+      <p id="login-error" class="login-error oculta"></p>
+    </div>
+  </section>
+
+  <!-- ============ CARGANDO ============ -->
+  <section id="vista-carga" class="vista">
+    <div class="carga-caja">
+      <img src="icons/icon-192.png" alt="" class="login-icono">
+      <p>Cargando…</p>
+    </div>
+  </section>
+
+  <!-- ============ INICIO ============ -->
+  <section id="vista-inicio" class="vista oculta">
+    <header class="inicio-cabecera">
+      <span id="inicio-fecha" class="inicio-fecha"></span>
+      <button id="btn-config" class="btn-icono" aria-label="Configuración">⚙︎</button>
+    </header>
+
+    <div id="saludo" class="saludo"></div>
+
+    <div id="racha-caja" class="racha-caja"></div>
+
+    <div id="accion-caja" class="accion-caja"></div>
+
+    <div id="aviso-pendiente" class="aviso-pendiente oculta"></div>
+
+    <nav class="accesos">
+      <button class="acceso" data-ir="agua"><span class="acceso-icono">◍</span>Agua</button>
+      <button class="acceso" data-ir="calendario"><span class="acceso-icono">▦</span>Calendario</button>
+      <button class="acceso" data-ir="peso"><span class="acceso-icono">◔</span>Peso</button>
+      <button class="acceso" data-ir="historial"><span class="acceso-icono">▤</span>Historial</button>
+    </nav>
+  </section>
+
+  <!-- ============ ENTRENAMIENTO ============ -->
+  <section id="vista-entreno" class="vista oculta">
+    <header class="entreno-cabecera">
+      <button id="btn-entreno-salir" class="btn-texto">Salir</button>
+      <span id="entreno-titulo"></span>
+      <span id="entreno-reloj" class="entreno-reloj"></span>
+    </header>
+    <div id="entreno-contenido" class="entreno-contenido"></div>
+  </section>
+
+  <!-- ============ CALENDARIO ============ -->
+  <section id="vista-calendario" class="vista oculta">
+    <header class="vista-cabecera">
+      <button class="btn-texto btn-volver" data-ir="inicio">‹ Inicio</button>
+      <h2>Calendario</h2>
+      <span></span>
+    </header>
+    <div id="heatmap" class="heatmap"></div>
+    <div class="cal-nav">
+      <button id="cal-prev" class="btn-icono">‹</button>
+      <span id="cal-mes-titulo"></span>
+      <button id="cal-sig" class="btn-icono">›</button>
+    </div>
+    <div id="cal-grilla" class="cal-grilla"></div>
+    <div class="cal-leyenda">
+      <span><i class="pv pv-hecha"></i>Hecha</span>
+      <span><i class="pv pv-recuperada"></i>Recuperada</span>
+      <span><i class="pv pv-causa"></i>Causa mayor</span>
+      <span><i class="pv pv-fallada"></i>Fallada</span>
+      <span><i class="pv pv-descanso"></i>Descanso</span>
+      <span><i class="pv pv-caminata"></i>Descanso + caminata</span>
+    </div>
+  </section>
+
+  <!-- ============ PESO ============ -->
+  <section id="vista-peso" class="vista oculta">
+    <header class="vista-cabecera">
+      <button class="btn-texto btn-volver" data-ir="inicio">‹ Inicio</button>
+      <h2>Peso</h2>
+      <span></span>
+    </header>
+    <div id="peso-contenido"></div>
+  </section>
+
+  <!-- ============ HISTORIAL ============ -->
+  <section id="vista-historial" class="vista oculta">
+    <header class="vista-cabecera">
+      <button class="btn-texto btn-volver" data-ir="inicio">‹ Inicio</button>
+      <h2>Historial</h2>
+      <span></span>
+    </header>
+    <div id="historial-contenido"></div>
+  </section>
+
+  <!-- ============ HOJAS / MODALES ============ -->
+  <div id="velo" class="velo oculta"></div>
+  <div id="hoja" class="hoja oculta">
+    <div class="hoja-tirador"></div>
+    <div id="hoja-contenido"></div>
+  </div>
+
+  <div id="toasts" class="toasts"></div>
+
+  <!-- rutinas y mensajes: scripts clásicos, editables a mano -->
+  <script src="rutinas.js"></script>
+  <script src="mensajes.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
