@@ -7,8 +7,10 @@
 
 /* --- Tokens ---------------------------------------------------------------- */
 :root {
+  /* Tres niveles que se distinguen: fondo, tarjeta y tarjeta elevada.
+     En claro la elevada vuelve al blanco y se separa por sombra y borde. */
   --fondo: #FFFFFF;
-  --superficie: #F5F5F7;
+  --superficie: #EFEFF4;
   --superficie2: #FFFFFF;
   --texto: #1D1D1F;
   --texto2: #6E6E73;
@@ -24,6 +26,15 @@
   --r-boton: 14px;
   --r-hoja: 24px;
   --r-barra: 28px;
+
+  /* Profundidad: nunca una sombra borrosa sola. Una de contacto, corta y
+     definida, más una ambiental larga y suave. En claro van a la mitad. */
+  --sombra-contacto: 0 1px 2px rgba(0,0,0,.08);
+  --sombra-ambiental: 0 8px 24px rgba(0,0,0,.05);
+  --luz: rgba(0,0,0,.04);          /* en claro la línea de luz va abajo */
+
+  /* Grano al 3%: es lo que hace que el negro deje de parecer un rectángulo */
+  --grano: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='.03'/%3E%3C/svg%3E");
 
   --curva: cubic-bezier(0.32, 0.72, 0, 1);          /* estándar 260ms */
   --curva-entrada: cubic-bezier(0.16, 1, 0.30, 1);  /* entrada 400ms  */
@@ -41,23 +52,15 @@
     --texto: #F5F5F7;
     --texto2: #98989D;
     --separador: rgba(255,255,255,.12);
+    /* En oscuro las sombras pesan el doble y la luz va arriba */
+    --sombra-contacto: 0 1px 2px rgba(0,0,0,.16);
+    --sombra-ambiental: 0 8px 24px rgba(0,0,0,.10);
+    --luz: rgba(255,255,255,.06);
   }
 }
-:root[data-theme="light"] {
-  --fondo: #FFFFFF; --superficie: #F5F5F7; --superficie2: #FFFFFF;
-  --texto: #1D1D1F; --texto2: #6E6E73; --separador: rgba(0,0,0,.08);
-}
-:root[data-theme="dark"] {
-  --fondo: #000000; --superficie: #1C1C1E; --superficie2: #2C2C2E;
-  --texto: #F5F5F7; --texto2: #98989D; --separador: rgba(255,255,255,.12);
-}
 
-/* Cambio de tema animado */
-html.transicion-tema body,
-html.transicion-tema .vista,
-html.transicion-tema .tarjeta,
-html.transicion-tema .hoja,
-html.transicion-tema .tabbar {
+/* El cambio de claro a oscuro lo dispara el sistema: se acompaña animado. */
+body, .vista, .tarjeta, .hoja, .tabbar, .racha {
   transition: background-color 300ms ease, color 300ms ease, border-color 300ms ease;
 }
 
@@ -175,7 +178,7 @@ img { max-width: 100%; display: block; }
 .vista-inicio #logros-zona { margin-top: 0; min-height: 0; overflow: hidden; }
 .vista-inicio .tarjeta-valor { font-size: clamp(17px, 2.6vh, 22px); }
 .vista-inicio .racha-num { font-size: clamp(24px, 4vh, 34px); margin: 2px 0 clamp(6px, 1.2vh, 12px); }
-.vista-inicio .racha-galon-grande { height: clamp(26px, 4vh, 44px); margin-bottom: 4px; }
+.vista-inicio .insignia { width: clamp(52px, 8vh, 68px); height: auto; }
 .vista-inicio .racha-galones { gap: clamp(6px, 1.4vw, 12px); margin-bottom: 4px; }
 .vista-inicio .racha-galones svg { width: clamp(20px, 6vw, 30px); height: auto; }
 .vista-inicio .anillo { width: clamp(38px, 6vh, 52px); height: clamp(38px, 6vh, 52px); }
@@ -197,15 +200,17 @@ img { max-width: 100%; display: block; }
    dicen 2 de 4 y la alerta dice si la racha corre riesgo. En tablet sí entra. */
 @media (max-height: 900px) {
   .vista-inicio .racha-falta { display: none; }
-  .vista-inicio .racha-num { margin: 2px 0 8px; }
-  .vista-inicio .racha-galon-grande { height: clamp(24px, 3.2vh, 34px); }
+  .vista-inicio .racha-num { margin: 2px 0 6px; }
 }
+/* La insignia NUNCA se oculta: se achica lo mínimo y listo. Lo que se pliega
+   es todo lo demás. */
 @media (max-height: 700px) {
-  .vista-inicio .racha-galon-grande { display: none; }
   .vista-inicio .fila-2 .tarjeta-nota { display: none; }
   .vista-inicio .tarjeta-peso .tarjeta-nota { display: none; }
   .vista-inicio #logros-en-racha { display: none; }
   .vista-inicio .racha-semana { font-size: 13px; }
+  .vista-inicio .insignia { width: 52px; height: 66px; }
+  .vista-inicio .racha { padding: 12px 16px; gap: 12px; }
 }
 /* Al límite: la tarjeta de peso se reduce a una sola línea */
 @media (max-height: 620px) {
@@ -305,6 +310,13 @@ img { max-width: 100%; display: block; }
   text-align: left;
   width: 100%;
   color: var(--texto);
+  /* Contacto corta y definida + ambiental larga y suave, más la línea de luz */
+  box-shadow: var(--sombra-contacto), var(--sombra-ambiental), inset 0 1px 0 var(--luz);
+}
+/* Tercer nivel: la tarjeta elevada se despega del resto */
+.tarjeta-elevada {
+  background: var(--superficie2);
+  box-shadow: 0 2px 4px rgba(0,0,0,.10), 0 16px 40px rgba(0,0,0,.12), inset 0 1px 0 var(--luz);
 }
 .tarjeta-tocable { transition: transform 120ms ease, background-color 120ms ease; }
 .tarjeta-tocable:active { background: color-mix(in srgb, var(--superficie) 80%, var(--texto) 4%); }
@@ -316,38 +328,74 @@ img { max-width: 100%; display: block; }
 .tarjeta-nota { font-size: 13px; color: var(--texto2); margin-top: 4px; line-height: 1.35; }
 .tarjeta-estado { font-size: 26px; align-self: flex-end; line-height: 1; }
 
-/* Tarjeta de racha: el elemento principal */
+/* ============================================================================
+   TARJETA DE RANGO — horizontal: datos a la izquierda, insignia a la derecha.
+   Es el corazón del inicio y lo que más motiva; la insignia no se oculta nunca.
+   ========================================================================== */
 #racha-tarjeta { margin-top: 24px; }
 .racha {
-  width: 100%; display: block;
-  border-radius: var(--r-tarjeta); padding: 24px 20px; text-align: center;
+  width: 100%; display: flex; align-items: center; gap: 16px;
+  border-radius: var(--r-tarjeta); padding: 18px 20px; text-align: left;
   border: 1px solid var(--separador);
-  position: relative; color: var(--texto);
+  position: relative; overflow: hidden; color: var(--texto);
   transition: transform 120ms ease;
+  box-shadow: var(--sombra-contacto), var(--sombra-ambiental);
 }
 .racha:active { transform: scale(0.98); }
-.racha-galon-grande { height: 44px; margin: 0 auto 8px; display: block; }
-.racha-rango { font-size: 13px; font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; }
-.racha-num { font-size: 34px; font-weight: 700; letter-spacing: -1px; margin: 4px 0 12px; font-variant-numeric: tabular-nums; }
-.racha-num small { font-size: 15px; font-weight: 500; letter-spacing: 0; }
-.racha-galones { display: flex; justify-content: center; gap: 12px; margin-bottom: 8px; }
-.racha-galones svg { width: 30px; height: 26px; }
-.racha-semana { font-size: 15px; margin-top: 4px; }
-.racha-falta { font-size: 13px; margin-top: 4px; }
-.racha-alerta { font-size: 13px; font-weight: 600; color: var(--rojo); margin-top: 12px; }
-.racha-congelada { font-size: 13px; font-weight: 600; color: var(--amarillo); margin-top: 12px; }
+.racha-datos { flex: 1; min-width: 0; }
+.racha-rango { font-size: 13px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; }
+.racha-num { font-size: clamp(22px, 3.6vh, 30px); font-weight: 700; letter-spacing: -1px; margin: 2px 0 8px; font-variant-numeric: tabular-nums; }
+.racha-num small { font-size: 14px; font-weight: 500; letter-spacing: 0; }
+.racha-linea { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.racha-galones { display: flex; gap: 6px; }
+.racha-galones svg { width: 22px; height: 19px; }
+.racha-semana { font-size: 14px; font-weight: 600; }
+.racha-falta { font-size: 12px; margin-top: 6px; }
+.racha-alerta { font-size: 12px; font-weight: 700; color: var(--rojo); margin-top: 8px; }
+.racha-congelada { font-size: 12px; font-weight: 700; color: var(--amarillo); margin-top: 8px; }
 
-/* Evolución por rango */
+/* La insignia: ocupa el alto de la tarjeta y no se achica nunca */
+.racha-insignia { flex: none; display: flex; align-items: center; }
+.insignia { width: 62px; height: 78px; display: block; }
+.ins-escudo { fill: none; stroke: currentColor; stroke-width: 3; opacity: .55; }
+.ins-galon { fill: currentColor; }
+.ins-brillo { display: none; }
+
+/* --- Tratamiento 1: Recluta a Cabo. Gris, insignia en contorno ------------- */
 .racha.r-base { background: var(--superficie); color: var(--texto); }
-.racha.r-base .racha-rango, .racha.r-base .racha-falta, .racha.r-base .racha-semana { color: var(--texto2); }
-.racha.r-negra, .racha.r-elite { background: #0A0A0B; color: #F5F5F7; border-color: rgba(255,255,255,.14); }
+.racha.r-base .racha-rango, .racha.r-base .racha-falta { color: var(--texto2); }
+.racha.r-base .ins-galon { fill: none; stroke: currentColor; stroke-width: 2.5; opacity: .5; }
+
+/* --- Tratamiento 2: Cabo Primero a Sargento. Negro con grano, insignia llena */
+.racha.r-negra, .racha.r-elite {
+  background-color: #0A0A0B; color: #F5F5F7; border-color: rgba(255,255,255,.14);
+  background-image: var(--grano);
+  border-top: 1px solid rgba(255,255,255,.08);
+}
 .racha.r-negra .racha-rango, .racha.r-negra .racha-falta,
 .racha.r-elite .racha-rango, .racha.r-elite .racha-falta { color: #98989D; }
+.racha.r-negra .ins-escudo, .racha.r-elite .ins-escudo { opacity: .75; }
+
+/* --- Tratamiento 3: Sargento Primero en adelante. Galón superior en rojo,
+   borde de luz y un barrido metálico muy lento sobre la insignia ------------ */
 .racha.r-elite {
   border: 1px solid transparent;
   background:
+    var(--grano) padding-box,
     linear-gradient(#0A0A0B, #0A0A0B) padding-box,
-    linear-gradient(calc(120deg + var(--tilt, 0deg)), rgba(255,255,255,.28), rgba(255,255,255,.06) 40%, rgba(214,40,40,.45)) border-box;
+    linear-gradient(calc(120deg + var(--tilt, 0deg)),
+      rgba(255,255,255,.32), rgba(255,255,255,.06) 40%, rgba(214,40,40,.5)) border-box;
+}
+.racha.r-elite .ins-rojo { fill: var(--rojo); }
+.racha.r-elite .ins-brillo {
+  display: block; fill: rgba(255,255,255,.30);
+  filter: blur(5px);
+  animation: barrido 6s var(--curva) infinite;
+}
+@keyframes barrido {
+  0%, 70% { transform: translateX(-30px); opacity: 0; }
+  80% { opacity: 1; }
+  100% { transform: translateX(80px); opacity: 0; }
 }
 
 /* Galones (chevrones) */
@@ -496,7 +544,8 @@ img { max-width: 100%; display: block; }
 
 /* --- Entrenamiento --------------------------------------------------------- */
 .vista-entreno {
-  background: #000; color: #F5F5F7;
+  background-color: #000; color: #F5F5F7;
+  background-image: var(--grano);   /* el negro deja de ser un rectángulo */
   /* Sin tirón para recargar: en medio de una sesión no se recarga nada */
   overscroll-behavior: contain;
   padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 84px);
@@ -611,7 +660,13 @@ img { max-width: 100%; display: block; }
 /* Esfuerzo */
 .esfuerzo-botones { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin: 12px 0 4px; }
 .esfuerzo-botones .btn { min-height: 60px; font-size: 14px; }
-.esfuerzo-botones .sel { background: #F5F5F7; color: #000; border-color: #F5F5F7; }
+/* Seleccionado con contraste real en los dos modos. Antes usaba #F5F5F7 fijo,
+   que en modo claro es exactamente el color del fondo del botón: se
+   seleccionaba y no se veía. */
+.esfuerzo-botones .sel {
+  background: var(--texto); color: var(--fondo); border-color: var(--texto);
+  font-weight: 700;
+}
 
 /* Checklists */
 .check-lista { display: grid; gap: 8px; margin: 12px 0; }
@@ -643,7 +698,16 @@ img { max-width: 100%; display: block; }
 .cierre-resumen strong { font-size: 26px; display: block; letter-spacing: -1px; font-variant-numeric: tabular-nums; }
 .escala-15 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 8px 0 16px; }
 .escala-15 .btn { min-height: 52px; font-weight: 700; }
-.escala-15 .sel { background: #F5F5F7; color: #000; }
+.escala-15 .sel {
+  background: var(--texto); color: var(--fondo); border-color: var(--texto);
+  font-weight: 700;
+}
+/* La pantalla de entrenamiento es negra siempre, no sigue al tema: ahí el
+   seleccionado va al revés para que contraste contra el negro. */
+.vista-entreno .escala-15 .sel,
+.vista-entreno .esfuerzo-botones .sel {
+  background: #F5F5F7; color: #0A0A0B; border-color: #F5F5F7;
+}
 .foto-zona {
   border: 1px dashed rgba(255,255,255,.25); border-radius: var(--r-tarjeta);
   min-height: 90px; display: flex; align-items: center; justify-content: center;
@@ -668,7 +732,8 @@ img { max-width: 100%; display: block; }
 /* --- Momentos (pantalla completa) ------------------------------------------ */
 .momento {
   position: fixed; inset: 0; z-index: 100;
-  background: #000; color: #F5F5F7;
+  background-color: #000; color: #F5F5F7;
+  background-image: var(--grano);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   text-align: center;
   padding: 32px calc(env(safe-area-inset-right,0px) + 32px) calc(env(safe-area-inset-bottom,0px) + 32px);

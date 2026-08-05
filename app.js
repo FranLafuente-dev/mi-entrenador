@@ -306,6 +306,21 @@ function svgGalon(estado, extra = "") {
   return `<svg viewBox="0 0 24 20" class="${extra}" aria-hidden="true">
     <path class="galon-${estado}" d="M12 2.5 22 10v5L12 8 2 15v-5z"/></svg>`;
 }
+
+/* La insignia del rango: el elemento visual más fuerte del inicio. Escudo con
+   tres galones adentro, el de arriba en rojo a partir de Sargento Primero. */
+function svgInsignia(clase) {
+  const galon = (y, cls) =>
+    `<path class="ins-galon ${cls}" d="M20 ${y} 34 ${y - 9} 48 ${y}v6L34 ${y - 3} 20 ${y + 6}z"/>`;
+  return `
+    <svg class="insignia" viewBox="0 0 68 84" aria-hidden="true">
+      <path class="ins-escudo" d="M34 2 64 12v32c0 20-13 31-30 38C17 75 4 64 4 44V12z"/>
+      ${galon(44, clase === "r-elite" ? "ins-rojo" : "")}
+      ${galon(56, "")}
+      ${galon(68, "")}
+      <rect class="ins-brillo" x="0" y="0" width="24" height="84"/>
+    </svg>`;
+}
 function svgAnillo(pct, { tilde = false } = {}) {
   const r = 45, c = 2 * Math.PI * r;
   const off = c * (1 - Math.min(1, Math.max(0, pct)));
@@ -319,7 +334,7 @@ function svgAnillo(pct, { tilde = false } = {}) {
 }
 
 /* ==========================================================================
-   TEMA — sigue al sistema, con toggle manual, y transición animada
+   TEMA — sigue al sistema y punto
    ========================================================================== */
 /* Claro y oscuro siguen al sistema y punto: no hay selector. Se limpia el
    `data-theme` que pudo dejar una versión anterior. */
@@ -1696,7 +1711,7 @@ function renderInicio() {
       <div><div class="tarjeta-titulo">Entreno hoy</div>
       <div class="tarjeta-valor">Completado</div>
       <div class="tarjeta-nota">${esc(resumenCortoSesion(reg))}${sinFoto ? " · falta la foto" : ""}</div></div>
-      <div class="tarjeta-estado">${sinFoto ? "✳️" : "✅"}</div>`;
+      <div class="tarjeta-estado">✅</div>`;
     tEntreno.onclick = () => abrirFicha(hoy, tEntreno);
   } else if (plan.tipo === "entreno" && estado !== "causa-mayor") {
     tEntreno.innerHTML = `
@@ -1796,19 +1811,24 @@ function renderRacha(racha, semanaActual) {
   const motivos = [];
   if (semanaActual.feriados) motivos.push(`${semanaActual.feriados} feriado${semanaActual.feriados > 1 ? "s" : ""}`);
   if (semanaActual.causasMayores) motivos.push(`${semanaActual.causasMayores} causa${semanaActual.causasMayores > 1 ? "s" : ""} mayor${semanaActual.causasMayores > 1 ? "es" : ""}`);
-  const marca = motivos.length ? ` <span class="racha-marca">· ${esc(motivos.join(" y "))}</span>` : "";
+  const marca = motivos.length ? `· ${esc(motivos.join(" y "))}` : "";
 
   const zona = $("#racha-tarjeta");
   zona.innerHTML = `
     <button class="racha ${clase} ${semanaActual.completa ? "completa" : ""}">
-      ${svgGalon(clase === "r-elite" ? "rojo" : "lleno", "racha-galon-grande")}
-      <div class="racha-rango">${esc(rango.nombre)}</div>
-      <div class="racha-num num">${racha} <small>${racha === 1 ? "semana seguida" : "semanas seguidas"}</small></div>
-      <div class="racha-galones">${galones}</div>
-      <div class="racha-semana num">${semanaActual.sesiones} de ${semanaActual.objetivo} esta semana${
-        semanaActual.caminatas > 0 ? ` <span class="racha-extra">+ caminata</span>` : ""}${marca}</div>
-      ${falta}${alerta}
-      <div id="logros-en-racha"></div>
+      <div class="racha-datos">
+        <div class="racha-rango">${esc(rango.nombre)}</div>
+        <div class="racha-num num">${racha} <small>${racha === 1 ? "semana seguida" : "semanas seguidas"}</small></div>
+        <div class="racha-linea">
+          <span class="racha-galones">${galones}</span>
+          <span class="racha-semana num">${semanaActual.sesiones} de ${semanaActual.objetivo}</span>
+        </div>
+        ${semanaActual.caminatas > 0 ? `<div class="racha-extra">+ caminata esta semana</div>` : ""}
+        ${marca ? `<div class="racha-marca">${marca.replace(/^ /, "")}</div>` : ""}
+        ${falta}${alerta}
+        <div id="logros-en-racha"></div>
+      </div>
+      <div class="racha-insignia">${svgInsignia(clase)}</div>
     </button>`;
   // Tocar la tarjeta del rango lleva al calendario.
   zona.querySelector(".racha").onclick = () => irA("calendario");
@@ -1881,7 +1901,7 @@ function renderLogros() {
     } else { corrida = 0; corridaLimpia = 0; }
   }
   const chips = [];
-  if (menciones) chips.push(`🔥 Mención de honor × ${menciones}`);
+  if (menciones) chips.push(`🏅 Mención de honor × ${menciones}`);
   if (perfectos) chips.push(`Mes perfecto × ${perfectos}`);
   if (hierros) chips.push(`Mes de hierro × ${hierros}`);
 
@@ -2757,7 +2777,7 @@ function pasoElegirRutina(ctx) {
     <input id="reg-foto-camara" type="file" accept="image/*" capture="environment" hidden>
     <input id="reg-foto-galeria" type="file" accept="image/*" hidden>
     <div class="hoja-acciones">
-      <button id="reg-camara" class="btn btn-rojo btn-gigante">📸 Sacar la foto y empezar</button>
+      <button id="reg-camara" class="btn btn-rojo btn-gigante">Sacar la foto y empezar</button>
       <button id="reg-empezar" class="btn btn-primario btn-grande oculta">Empezar entrenamiento</button>
     </div>
 
@@ -4014,7 +4034,7 @@ function hojaDetalleDia(fecha) {
   if (reg?.caminata?.minutos)
     cuerpo += `<div class="dia-detalle-fila"><span>Caminata</span><span>${reg.caminata.minutos} min${reg.caminata.nota ? " · " + esc(reg.caminata.nota) : ""}</span></div>`;
   if (reg?.aguaMl) cuerpo += `<div class="dia-detalle-fila"><span>Agua</span><span class="num">${fmtLitros(reg.aguaMl)} L</span></div>`;
-  if (faltaFoto) cuerpo += `<div class="dia-detalle-fila"><span>Foto</span><span>Sin foto ✳️</span></div>`;
+  if (faltaFoto) cuerpo += `<div class="dia-detalle-fila"><span>Foto</span><span>Todavía sin foto</span></div>`;
   else if (reg?.fotoAgregadaEl && reg.fotoAgregadaEl !== fecha)
     cuerpo += `<div class="dia-detalle-fila"><span>Foto</span><span class="dato">agregada el ${DIAS_NOMBRE[diaSemanaDe(reg.fotoAgregadaEl)]}</span></div>`;
   if (reg?.comentario) cuerpo += `<p class="mt">${esc(reg.comentario)}</p>`;
