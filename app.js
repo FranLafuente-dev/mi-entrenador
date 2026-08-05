@@ -378,6 +378,19 @@ async function prepararGoogle() {
     window.google.accounts.id.prompt();
     gisListo = true;
     logAuth("Google Identity Services listo");
+
+    // Google dibuja el botón aunque el origen no esté autorizado: el rechazo
+    // recién aparece al pedir el token, y no lanza ninguna excepción que se
+    // pueda atrapar acá. Así que esto solo cubre el caso de que el botón no
+    // llegue a dibujarse (script a medias, Client ID malformado), que si no
+    // dejaría la pantalla con el botón de respaldo y sin explicación.
+    setTimeout(() => {
+      if ($("#gis-boton")?.childElementCount) return;
+      logAuth("Google no llegó a dibujar el botón");
+      avisoLogin("Google no llegó a dibujar su botón. Puede ser el Client ID " +
+        `o que este origen (${location.origin}) no esté autorizado en ` +
+        "console.cloud.google.com → Credenciales → Authorized JavaScript origins.");
+    }, 2500);
   } catch (e) {
     logAuth(`GIS no se pudo inicializar: ${e?.message || e}`);
     avisoLogin("Google no respondió como se esperaba. Probá con el botón de abajo.");

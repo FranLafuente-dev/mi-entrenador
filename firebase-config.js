@@ -39,4 +39,4 @@ export const firebaseConfig = {
         y guardá. Sin eso Google rechaza el pedido.
 
    Empieza con el número del proyecto: 249017917046-....              */
-export const googleClientId = "PEGAR-CLIENT-ID.apps.googleusercontent.com";
+export const googleClientId = "249017917046-4rrl5rsi2d8gfs27oc8m0mkq9qfhcdhr.apps.googleusercontent.com";
