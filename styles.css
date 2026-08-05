@@ -17,7 +17,8 @@
   --rojo: #D62828;
   --verde: #30D158;
   --amarillo: #FFD60A;
-  --azul: #0A84FF;   /* solo el extra de caminata */
+  --azul: #0A84FF;     /* solo el extra de caminata */
+  --celeste: #5AC8FA;  /* solo la gota del agua */
 
   --r-tarjeta: 20px;
   --r-boton: 14px;
@@ -358,6 +359,7 @@ img { max-width: 100%; display: block; }
 /* El quinto galón es un extra: va apenas separado de los cuatro */
 .racha-galones .galon-extra { margin-left: 4px; }
 .racha-extra { color: var(--azul); font-weight: 600; }
+.racha-marca { font-size: 12px; opacity: .75; font-weight: 500; }
 .racha.completa { box-shadow: 0 0 0 2px var(--verde) inset; }
 .racha.completa .racha-rango { color: var(--verde); font-size: 15px; }
 
@@ -731,6 +733,18 @@ img { max-width: 100%; display: block; }
 .pv-fallada { background: var(--rojo); }
 .pv-descanso { background: var(--superficie); border: 1px solid var(--separador); }
 .pv-caminata { background: var(--superficie); border: 1px solid var(--verde); }
+.pv-feriado { background: var(--superficie); border: 1px dashed var(--texto2); }
+.pv-agua { background: var(--celeste); border-radius: 50%; }
+
+/* La gota del agua: esquina superior izquierda, distinta de la caminata
+   (que va abajo al centro) y del asterisco de sin foto (arriba a la derecha). */
+.cal-gota {
+  position: absolute; top: 3px; left: 3px;
+  width: 6px; height: 6px; border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  background: var(--celeste);
+}
+.cal-dia.d-feriado { border: 1px dashed var(--texto2); }
 
 /* Heatmap */
 .heatmap { overflow-x: auto; padding: 4px 0 8px; }

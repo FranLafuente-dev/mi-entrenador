@@ -827,8 +827,20 @@ function regReal(iso) {
   return d && !d.esPrueba ? d : null;
 }
 
+/* Feriados: los de rutinas.js (cargas masivas) más los marcados desde el
+   calendario, que viven en la configuración. */
 function esFeriado(iso) {
+  if (typeof FERIADOS !== "undefined" && FERIADOS.includes(iso)) return true;
+  return !!S.config?.feriados?.[iso];
+}
+function esFeriadoDeArchivo(iso) {
   return typeof FERIADOS !== "undefined" && FERIADOS.includes(iso);
+}
+
+/* El día ya cumplió el objetivo de agua. Vale también en días de descanso. */
+function cumplioAgua(iso) {
+  const reg = S.dias.get(iso);
+  return (reg?.aguaMl || 0) >= (S.config?.aguaObjetivoMl || 2000);
 }
 /* Los días de descanso salen de CONFIG.diasDescanso y la rutina de cada día de
    entrenamiento sale de SEMANA. Las dos cosas viven en rutinas.js. */
@@ -894,11 +906,16 @@ function sesionRegistrada(iso) {
 /* ==========================================================================
    REGLAS DE NEGOCIO — semanas, racha, rangos
    ========================================================================== */
+/* El objetivo de una semana NO es siempre cuatro: cada feriado y cada causa
+   mayor que caiga en un día de entreno baja el objetivo en uno. Un viernes
+   feriado deja la semana en 3 de 3. Si no queda ningún día de entreno, la
+   semana no cuenta ni a favor ni en contra. */
 function resumenSemana(lunes) {
   const dias = [];
   for (let i = 0; i < 7; i++) dias.push(sumarDias(lunes, i));
 
   let sesiones = 0, recuperadas = 0, caminatas = 0, causaEscudo = false;
+  let objetivo = 0, feriados = 0, causasMayores = 0, diasAgua = 0;
   const faltantes = [];
   for (const f of dias) {
     const e = estadoDia(f);
@@ -906,8 +923,16 @@ function resumenSemana(lunes) {
     if (e === "hecha" || e === "a-medias") sesiones++;
     else if (e === "recuperada") { sesiones++; recuperadas++; }
     else if (e === "descanso-caminata") caminatas++;
+    if (cumplioAgua(f)) diasAgua++;
     if (e === "causa-mayor" && regReal(f)?.causaMayor?.conEscudo) causaEscudo = true;
-    if (plan.tipo === "entreno" && f >= pisoFecha() && !sesionRegistrada(f)) faltantes.push(f);
+
+    if (f < pisoFecha()) continue;
+    // El feriado ya volvió el día "descanso" en planDelDia, así que no suma.
+    if (esFeriado(f) && (SEMANA[diaSemanaDe(f)]?.tipo === "entreno")) { feriados++; continue; }
+    if (plan.tipo !== "entreno") continue;
+    if (e === "causa-mayor") { causasMayores++; continue; }
+    objetivo++;
+    if (!sesionRegistrada(f)) faltantes.push(f);
   }
   const clave = claveSemana(lunes);
   const guardada = S.semanas.get(clave);
@@ -916,9 +941,12 @@ function resumenSemana(lunes) {
   return {
     clave, lunes, domingo: sumarDias(lunes, 6),
     sesiones, recuperadas, caminatas, faltantes,
-    completa: sesiones >= CONFIG.sesionesPorSemana,
+    objetivo, feriados, causasMayores, diasAgua,
+    // Sin días de entreno disponibles, la semana queda neutra.
+    neutra: objetivo === 0,
+    completa: objetivo > 0 && sesiones >= objetivo,
     escudo,
-    mencionHonor: sesiones >= CONFIG.sesionesPorSemana && caminatas > 0,
+    mencionHonor: objetivo > 0 && sesiones >= objetivo && caminatas > 0,
   };
 }
 
@@ -929,7 +957,10 @@ function calcularRacha() {
   const cerradas = [];
   for (let l = inicio; l < lunesActual; l = sumarDias(l, 7)) {
     const r = resumenSemana(l);
-    if (r.completa) racha++;
+    // Semana sin días de entreno disponibles: la racha se congela sin gastar
+    // el escudo. Ni feriado ni causa mayor rompen la racha.
+    if (r.neutra) { /* ni suma ni resta */ }
+    else if (r.completa) racha++;
     else if (r.escudo) { /* congelada */ }
     else racha = Math.max(0, racha - 1);
     r.rachaAlCierre = racha;
@@ -995,7 +1026,11 @@ async function procesarSemanasCerradas() {
       for (const r of cerradas) {
         const guardada = S.semanas.get(r.clave);
 
-        if (!r.completa && !r.escudo && !guardada?.decidida) {
+        // El escudo es solo para semanas incompletas SIN feriado ni causa
+        // mayor: en esas el objetivo ya bajó, no hace falta gastarlo.
+        const puedeEscudo = !r.completa && !r.neutra && !r.escudo &&
+          r.feriados === 0 && r.causasMayores === 0;
+        if (puedeEscudo && !guardada?.decidida) {
           const mes = mesDeSemana(r.lunes);
           if (escudoDisponible(mes)) {
             const usa = await preguntarEscudo(r);
@@ -1703,7 +1738,8 @@ function renderRacha(racha, semanaActual) {
   /* Los cuatro días de la semana en verde a medida que se completan, y un
      quinto en azul que aparece solo si hubo caminata en día de descanso: es un
      extra por encima de los cuatro, no un reemplazo. */
-  let galones = Array.from({ length: CONFIG.sesionesPorSemana }, (_, i) =>
+  const objetivo = Math.max(semanaActual.objetivo, semanaActual.sesiones);
+  let galones = Array.from({ length: objetivo }, (_, i) =>
     svgGalon(i < semanaActual.sesiones ? "hecho" : "vacio")).join("");
   if (semanaActual.caminatas > 0) galones += svgGalon("extra", "galon-extra");
 
@@ -1714,8 +1750,10 @@ function renderRacha(racha, semanaActual) {
   }
   let alerta = "";
   const posibles = posiblesHastaDomingo();
-  if (!semanaActual.completa && racha > 0 &&
-      semanaActual.sesiones + posibles < CONFIG.sesionesPorSemana) {
+  if (semanaActual.neutra) {
+    alerta = `<div class="racha-congelada">Semana sin días de entreno: la racha no se toca</div>`;
+  } else if (!semanaActual.completa && racha > 0 &&
+      semanaActual.sesiones + posibles < semanaActual.objetivo) {
     alerta = `<div class="racha-alerta">Semana perdida salvo escudo: bajás a ${rangoSiFalla(racha).nombre}</div>`;
   } else if (!semanaActual.completa && racha > 0 &&
       (dow === 0 || dow >= 5 || hora >= horaDe(CONFIG.horaLimite, 20))) {
@@ -1724,6 +1762,12 @@ function renderRacha(racha, semanaActual) {
     alerta = `<div class="racha-congelada">Semana con escudo: racha congelada</div>`;
   }
 
+  /* La marca chica que explica por qué el objetivo bajó de cuatro. */
+  const motivos = [];
+  if (semanaActual.feriados) motivos.push(`${semanaActual.feriados} feriado${semanaActual.feriados > 1 ? "s" : ""}`);
+  if (semanaActual.causasMayores) motivos.push(`${semanaActual.causasMayores} causa${semanaActual.causasMayores > 1 ? "s" : ""} mayor${semanaActual.causasMayores > 1 ? "es" : ""}`);
+  const marca = motivos.length ? ` <span class="racha-marca">· ${esc(motivos.join(" y "))}</span>` : "";
+
   const zona = $("#racha-tarjeta");
   zona.innerHTML = `
     <button class="racha ${clase} ${semanaActual.completa ? "completa" : ""}">
@@ -1731,8 +1775,8 @@ function renderRacha(racha, semanaActual) {
       <div class="racha-rango">${esc(rango.nombre)}</div>
       <div class="racha-num num">${racha} <small>${racha === 1 ? "semana seguida" : "semanas seguidas"}</small></div>
       <div class="racha-galones">${galones}</div>
-      <div class="racha-semana num">${semanaActual.sesiones} de ${CONFIG.sesionesPorSemana} esta semana${
-        semanaActual.caminatas > 0 ? ` <span class="racha-extra">+ caminata</span>` : ""}</div>
+      <div class="racha-semana num">${semanaActual.sesiones} de ${semanaActual.objetivo} esta semana${
+        semanaActual.caminatas > 0 ? ` <span class="racha-extra">+ caminata</span>` : ""}${marca}</div>
       ${falta}${alerta}
       <div id="logros-en-racha"></div>
     </button>`;
@@ -3878,7 +3922,11 @@ function renderCalendario() {
     const reg = S.dias.get(iso);
     if (sesionRegistrada(iso) && !reg?.tieneFoto) cls += " d-sin-foto";
     if (reg?.sesion?.abierta) cls += " d-abierta";
-    const celda = el("button", `cal-dia ${cls} ${iso === hoy ? "d-hoy" : ""}`, String(d));
+    if (esFeriado(iso)) cls += " d-feriado";
+    // La gota no reemplaza el color del día: un día puede ser verde y tenerla.
+    const gota = cumplioAgua(iso) ? `<i class="cal-gota" title="Objetivo de agua cumplido"></i>` : "";
+    const celda = el("button", `cal-dia ${cls} ${iso === hoy ? "d-hoy" : ""}`,
+      `${d}${gota}`);
     if (e === "previo") celda.disabled = true;
     // Siempre el detalle: es desde donde se arregla cualquier cosa del día.
     else celda.onclick = () => hojaDetalleDia(iso);
@@ -3952,16 +4000,54 @@ function hojaDetalleDia(fecha) {
     acciones.push(`<button id="dd-hecho" class="btn btn-primario btn-grande">Marcar como hecho</button>`);
     acciones.push(`<button id="dd-retro" class="btn btn-borde btn-grande">Cargar los pesos que hice</button>`);
   }
-  if (plan.tipo === "descanso" && fecha <= hoy) {
+  if (plan.tipo === "descanso" && fecha <= hoy && !esFeriado(fecha)) {
     acciones.push(`<button id="dd-caminata" class="btn btn-borde btn-grande">${reg?.caminata ? "Editar" : "Registrar"} caminata</button>`);
+  }
+
+  /* Feriado y causa mayor se marcan en cualquier día, pasado o futuro, y se
+     desmarcan. Bajan el objetivo de esa semana en uno. */
+  const esFer = esFeriado(fecha);
+  const marcas = [];
+  if (esFeriadoDeArchivo(fecha)) {
+    marcas.push(`<p class="dato">Feriado fijo de rutinas.js: se saca desde ese archivo.</p>`);
+  } else {
+    marcas.push(`<button id="dd-feriado" class="btn btn-borde btn-grande">${
+      esFer ? "Quitar el feriado" : "Marcar como feriado"}</button>`);
+  }
+  if (estado === "causa-mayor") {
+    marcas.push(`<button id="dd-quitar-causa" class="btn btn-borde btn-grande">Quitar la causa mayor</button>`);
+  } else if (!esFer && !registrado) {
+    marcas.push(`<button id="dd-causa" class="btn btn-borde btn-grande">Marcar como causa mayor</button>`);
   }
 
   abrirHoja(`
     <h3 style="text-transform:capitalize">${fmtFechaLarga(fecha)}</h3>
     ${cuerpo}
-    ${acciones.length ? `<div class="hoja-acciones">${acciones.join("")}</div>` : ""}`);
+    ${acciones.length ? `<div class="hoja-acciones">${acciones.join("")}</div>` : ""}
+    ${marcas.length ? `<div class="paso-indicador">Marcar el día</div>
+      <div class="hoja-acciones" style="margin-top:0">${marcas.join("")}</div>` : ""}`);
 
   const on = (id, fn) => { const b = $(`#${id}`); if (b) b.onclick = fn; };
+
+  on("dd-feriado", (ev) => alternarFeriado(fecha, ev.currentTarget));
+  on("dd-causa", () => hojaCausaMayor(fecha, escudoDisponible(fecha.slice(0, 7))));
+  on("dd-quitar-causa", async (ev) => {
+    const antes = { ...(S.dias.get(fecha) || {}) };
+    const ok = await guardarDia(fecha, {
+      estado: null, causaMayor: null, tipo: planDelDia(fecha).tipo,
+    }, { queHacia: "la causa mayor", boton: ev.currentTarget });
+    if (!ok) return;
+    cerrarHoja(true);
+    await procesarSemanasCerradas();
+    refrescarVistaActual();
+    ofrecerDeshacer("Causa mayor quitada", async () => {
+      await guardarDia(fecha, { estado: antes.estado, causaMayor: antes.causaMayor || null },
+        { queHacia: "la causa mayor" });
+      await procesarSemanasCerradas();
+      refrescarVistaActual();
+    });
+  });
+
   on("dd-retomar", () => { cerrarHoja(true); retomarSesion(fecha); });
   /* Una sesión ya cerrada se reabre: se le vuelven a cargar series y se cierra
      de nuevo con "Terminar". El día sigue contando igual mientras tanto. */
@@ -4000,6 +4086,27 @@ function hojaDetalleDia(fecha) {
     await procesarSemanasCerradas();
     refrescarVistaActual();
     toast("Día marcado como hecho.", "toast-record");
+  });
+}
+
+/* Marcar o desmarcar un feriado. Recalcula la racha al instante. */
+async function alternarFeriado(fecha, boton) {
+  const feriados = { ...(S.config.feriados || {}) };
+  const estaba = !!feriados[fecha];
+  if (estaba) delete feriados[fecha];
+  else feriados[fecha] = true;
+
+  const ok = await guardarConfig({ feriados }, { queHacia: "el feriado", boton });
+  if (!ok) return;
+  cerrarHoja(true);
+  await procesarSemanasCerradas();
+  refrescarVistaActual();
+  ofrecerDeshacer(estaba ? "Feriado quitado" : "Día marcado como feriado", async () => {
+    const vuelta = { ...(S.config.feriados || {}) };
+    if (estaba) vuelta[fecha] = true; else delete vuelta[fecha];
+    await guardarConfig({ feriados: vuelta }, { queHacia: "el feriado" });
+    await procesarSemanasCerradas();
+    refrescarVistaActual();
   });
 }
 
@@ -4400,7 +4507,10 @@ function renderPeso() {
   const objetivo = S.config.pesoObjetivo;
   const ultimo = lista[lista.length - 1];
   const tendencia = lista.length ? tendenciaEn(lista, lista.length - 1) : null;
-  const esLunes = diaSemanaDe(hoyISO()) === CONFIG.pesajeDia;
+  /* El pesaje es de los lunes, pero el aviso insiste todos los días hasta que
+     lo carga. Una vez cargado en la semana, no se vuelve a pedir. */
+  const lunes = lunesDe(hoyISO());
+  const pesadoEstaSemana = [...S.pesajes.keys()].some((f) => f >= lunes && f <= hoyISO());
 
   let resumenObjetivo = "";
   if (objetivo && tendencia) {
@@ -4416,7 +4526,10 @@ function renderPeso() {
   }
 
   cont.innerHTML = `
-    ${esLunes && !S.pesajes.has(hoyISO()) ? `<p class="vacio-direccion">Hoy es lunes: día de pesaje.</p>` : ""}
+    ${!pesadoEstaSemana ? `<p class="vacio-direccion">${
+      diaSemanaDe(hoyISO()) === CONFIG.pesajeDia
+        ? "Hoy es lunes: día de pesaje."
+        : "Todavía no te pesaste esta semana. Subite a la balanza y seguimos midiendo."}</p>` : ""}
     <button id="btn-pesaje" class="btn btn-rojo btn-grande">Registrar pesaje</button>
     <div class="peso-resumen">
       <div class="peso-tarjeta"><strong>${ultimo ? ultimo.pesoKg.toFixed(1).replace(".", ",") : "—"}</strong><span>Último (kg)</span></div>
