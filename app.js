@@ -328,11 +328,18 @@ function iniciarFirebase() {
       const cambioDeUsuario = S.user?.uid !== user.uid;
       logAuth(`sesión activa: ${user.email}${cambioDeUsuario ? "" : " (refresco)"}`);
       S.user = user;
+      try { localStorage.setItem("ultimoUsuario", user.email || user.uid); } catch (_) { }
+      pedirAlmacenamientoPersistente();
       if (cambioDeUsuario) {
         prepararRefs();
         conectarDatos();
       }
       if (!S.cargado) mostrarVista("carga");
+    } else if (!navigator.onLine && localStorage.getItem("ultimoUsuario")) {
+      // Sin red y con un usuario conocido: NO se manda al login. Esperamos a
+      // que vuelva la conexión o a que Firebase restaure la sesión guardada.
+      logAuth("sin red y con usuario guardado: no se muestra el login");
+      mostrarEsperaSinConexion();
     } else {
       logAuth("sin sesión → pantalla de login");
       S.user = null;
@@ -352,6 +359,31 @@ function iniciarFirebase() {
     .catch((e) => logAuth(`redirect heredado falló: ${e?.code || e?.message}`));
 }
 
+/* Sin esto el navegador puede borrar los datos del sitio cuando le falta
+   espacio, y con ellos la sesión. Se pide una sola vez. */
+async function pedirAlmacenamientoPersistente() {
+  if (localStorage.getItem("almacenamientoPedido")) return;
+  try {
+    if (navigator.storage?.persist) {
+      const ok = await navigator.storage.persisted() || await navigator.storage.persist();
+      logAuth(`almacenamiento persistente: ${ok ? "concedido" : "denegado"}`);
+    }
+  } catch (_) { }
+  try { localStorage.setItem("almacenamientoPedido", "1"); } catch (_) { }
+}
+
+/* Sin red y con usuario conocido: cartel de espera, nunca el login. */
+function mostrarEsperaSinConexion() {
+  mostrarVista("carga");
+  const carga = $("#vista-carga");
+  if ($("#espera-sin-red")) return;
+  const caja = el("div", "login-error", `<b>Sin conexión.</b><br>` +
+    `Estás como ${esc(localStorage.getItem("ultimoUsuario") || "")}. ` +
+    `En cuanto vuelva internet seguimos: no hace falta volver a entrar.`);
+  caja.id = "espera-sin-red";
+  carga.appendChild(caja);
+}
+
 /* --- Google Identity Services ---------------------------------------------- */
 let gisListo = false;
 
@@ -367,13 +399,20 @@ function cargarScriptGIS() {
   });
 }
 
+/* El botón de respaldo aparece SOLO si Google no llegó a dibujar el suyo.
+   Nunca los dos juntos. */
+function mostrarRespaldoLogin(motivo) {
+  $("#btn-login")?.classList.remove("oculta");
+  logAuth(`respaldo de login visible: ${motivo}`);
+}
+
 async function prepararGoogle() {
   if (gisListo) return;
   const cid = (googleClientId || "").trim();
 
   if (!cid || cid.startsWith("PEGAR")) {
-    avisoLogin("Falta pegar el Client ID de Google en firebase-config.js. " +
-      "Mientras tanto podés entrar con el botón de abajo (funciona en Android y en la compu).");
+    avisoLogin("Falta pegar el Client ID de Google en firebase-config.js.");
+    mostrarRespaldoLogin("sin Client ID");
     return;
   }
   if (!navigator.onLine) {
@@ -385,7 +424,8 @@ async function prepararGoogle() {
     await cargarScriptGIS();
   } catch (e) {
     logAuth("no cargó el script de Google");
-    avisoLogin("No se pudo contactar a Google. Probá con el botón de abajo.");
+    avisoLogin("No se pudo contactar a Google.");
+    mostrarRespaldoLogin("script bloqueado");
     return;
   }
 
@@ -402,9 +442,13 @@ async function prepararGoogle() {
       type: "standard", theme: "filled_black", size: "large",
       text: "signin_with", shape: "pill", locale: "es-419", width: 280,
     });
-    window.google.accounts.id.prompt();
     gisListo = true;
     logAuth("Google Identity Services listo");
+
+    // El aviso automático va aparte: si falla, el botón ya está dibujado y
+    // sirve igual, así que no es motivo para sacar el de respaldo.
+    try { window.google.accounts.id.prompt(); }
+    catch (e) { logAuth(`prompt() no salió: ${e?.message || e}`); }
 
     // Google dibuja el botón aunque el origen no esté autorizado: el rechazo
     // recién aparece al pedir el token, y no lanza ninguna excepción que se
@@ -413,14 +457,15 @@ async function prepararGoogle() {
     // dejaría la pantalla con el botón de respaldo y sin explicación.
     setTimeout(() => {
       if ($("#gis-boton")?.childElementCount) return;
-      logAuth("Google no llegó a dibujar el botón");
       avisoLogin("Google no llegó a dibujar su botón. Puede ser el Client ID " +
         `o que este origen (${location.origin}) no esté autorizado en ` +
         "console.cloud.google.com → Credenciales → Authorized JavaScript origins.");
+      mostrarRespaldoLogin("no dibujó el botón");
     }, 2500);
   } catch (e) {
     logAuth(`GIS no se pudo inicializar: ${e?.message || e}`);
-    avisoLogin("Google no respondió como se esperaba. Probá con el botón de abajo.");
+    avisoLogin("Google no respondió como se esperaba.");
+    mostrarRespaldoLogin(`falló initialize: ${e?.message || e}`);
   }
 }
 
@@ -585,11 +630,15 @@ async function alCambiarDatos() {
 
   await procesarSemanasCerradas();
   if (primeraVez && (vistaActual === "carga" || vistaActual === "login")) {
-    irA("inicio", true);
-    // Si retomó una sesión abierta de hoy, se entra directo al entrenamiento.
+    // Con una sesión abierta de hoy se entra DIRECTO al entrenamiento, al mismo
+    // ejercicio y la misma serie. Sin pasar por el inicio ni pedir un toque.
     const abierta = diaConSesionAbierta();
-    if (abierta?.fecha === hoyISO() && !S.sesion) toast("Tenés un entrenamiento sin cerrar. Tocá la tarjeta para seguir.", "", 6000);
-    else avisarCierreAutomatico();
+    if (abierta?.fecha === hoyISO() && !S.sesion && retomarSesion(abierta.fecha)) {
+      toast("Seguimos donde estabas.", "", 3500);
+    } else {
+      irA("inicio", true);
+      avisarCierreAutomatico();
+    }
   } else refrescarVistaActual();
 }
 
@@ -992,6 +1041,7 @@ function mostrarVista(nombre) {
   actualizarTabbar();
   refrescarVistaActual();
   pintarBarraDescanso();     // el descanso sigue a la vista, no al revés
+  pintarAvisoVersion();      // al cerrarse la sesión, el aviso puede aparecer
   window.scrollTo(0, 0);
 }
 
@@ -1918,7 +1968,11 @@ function hojaCausaMayor(fecha, hayEscudo) {
    ========================================================================== */
 const TIPO_SESION_AUDIO = "transient";   // "playback" si la campana no suena bloqueada
 
-const AUDIO = { ctx: null, buffer: null, vivo: null, agendadas: new Map() };
+const AUDIO = {
+  ctx: null, buffer: null, vivo: null,
+  agendadas: new Map(),   // clave → { src, instante }
+  sonadas: new Set(),     // claves cuya campana disparó de verdad
+};
 const campana = new Audio("campana.mp3");   // respaldo para primer plano
 campana.preload = "auto";
 
@@ -1973,7 +2027,11 @@ function mantenerAudioVivo(encender) {
   }
 }
 
-/* Agenda la campana para un instante absoluto (Date.now en ms). */
+/* Agenda la campana para un instante absoluto (Date.now en ms).
+
+   `onended` es la prueba de que sonó DE VERDAD: si el contexto estaba
+   suspendido, el nodo nunca dispara y nunca se marca. Ese era el bug: la app
+   daba por tocada una campana que nadie escuchó. */
 function agendarCampana(clave, instanteMs) {
   cancelarCampana(clave);
   const ctx = AUDIO.ctx;
@@ -1984,17 +2042,73 @@ function agendarCampana(clave, instanteMs) {
   const src = ctx.createBufferSource();
   src.buffer = AUDIO.buffer;
   src.connect(ctx.destination);
+  src.onended = () => {
+    AUDIO.sonadas.add(clave);
+    AUDIO.agendadas.delete(clave);
+    if (AUDIO.agendadas.size === 0) mantenerAudioVivo(false);
+  };
   try { src.start(ctx.currentTime + faltanSeg); } catch (_) { return false; }
-  AUDIO.agendadas.set(clave, src);
+  AUDIO.agendadas.set(clave, { src, instante: instanteMs });
+  AUDIO.sonadas.delete(clave);
   mantenerAudioVivo(true);
   return true;
 }
 
 function cancelarCampana(clave) {
-  const src = AUDIO.agendadas.get(clave);
-  if (src) { try { src.stop(); } catch (_) { } AUDIO.agendadas.delete(clave); }
+  const a = AUDIO.agendadas.get(clave);
+  if (a) {
+    a.src.onended = null;                  // cancelar no es haber sonado
+    try { a.src.stop(); } catch (_) { }
+    AUDIO.agendadas.delete(clave);
+  }
+  AUDIO.sonadas.delete(clave);
   // Sin nada agendado no hace falta seguir sosteniendo el contexto de audio.
   if (AUDIO.agendadas.size === 0) mantenerAudioVivo(false);
+}
+
+function campanaYaSono(clave) { return AUDIO.sonadas.has(clave); }
+function campanaEnEspera(clave) {
+  return AUDIO.agendadas.has(clave) && AUDIO.ctx?.state === "running";
+}
+
+/* Al volver a foco: reanudar el reloj de audio y volver a agendar lo que
+   todavía no venció. El reloj del contexto se congela con la suspensión, así
+   que un `start(when)` viejo quedó apuntando a un momento que ya no coincide
+   con el reloj de pared: hay que rehacerlo contra el instante absoluto. */
+async function resincronizarAudio() {
+  const ctx = AUDIO.ctx;
+  if (!ctx) return;
+  try { await ctx.resume(); } catch (_) { }
+
+  if (ctx.state !== "running") {
+    // iOS a veces exige un gesto para devolver el audio tras una llamada.
+    mostrarAvisoAudio(true);
+    return;
+  }
+  mostrarAvisoAudio(false);
+
+  for (const clave of ["timer", "descanso"]) {
+    const t = S.sesion?.[clave];
+    if (!t || t.sono) continue;
+    if (t.fin > Date.now()) t.agendada = agendarCampana(clave, t.fin);
+  }
+}
+
+/* Cartel para reactivar el audio a mano cuando el sistema lo retuvo. */
+function mostrarAvisoAudio(visible) {
+  const caja = $("#aviso-audio");
+  if (!caja) return;
+  caja.classList.toggle("oculta", !visible);
+  if (!visible) return;
+  const btn = caja.querySelector("button");
+  if (btn) btn.onclick = async () => {
+    await prepararAudio();
+    await resincronizarAudio();
+    if (AUDIO.ctx?.state === "running") {
+      caja.classList.add("oculta");
+      toast("Audio reactivado. La campana vuelve a sonar.", "toast-record");
+    }
+  };
 }
 
 /* Toque inmediato (botón "Probar campana" y respaldo en primer plano). */
@@ -2022,15 +2136,31 @@ async function pedirWakeLock() {
 function soltarWakeLock() {
   if (S.wakeLock) { S.wakeLock.release().catch(() => { }); S.wakeLock = null; }
 }
+/* --- Ciclo de vida: volver a foco y estar por irse ------------------------- */
+function alVolverAFoco() {
+  if (S.sesion) pedirWakeLock();
+  resincronizarAudio();
+  tickTimers(true);
+  buscarActualizacion();
+  if (!S.cargado) return;
+  // Redibujar: si un bloque terminó estando afuera, el botón tiene que
+  // reflejarlo y no quedar con el estado con el que se dejó la pantalla.
+  if (vistaActual === "entreno" && S.sesion) renderPasoSesion();
+  else if (vistaActual === "inicio") renderInicio();
+}
+
+/* Antes de que el sistema descarte la pestaña: guardar sin retardo. */
+function alIrseAlFondo() {
+  if (S.sesion) guardarSesion({ diferido: false });
+}
+
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") {
-    if (S.sesion) pedirWakeLock();
-    // iOS suspende el contexto al volver del segundo plano más de la cuenta.
-    if (AUDIO.ctx?.state === "suspended") AUDIO.ctx.resume().catch(() => { });
-    tickTimers(true);
-    if (S.cargado && vistaActual === "inicio") renderInicio();
-  }
+  if (document.visibilityState === "visible") alVolverAFoco();
+  else alIrseAlFondo();
 });
+window.addEventListener("pagehide", alIrseAlFondo);
+document.addEventListener("freeze", alIrseAlFondo);
+document.addEventListener("resume", alVolverAFoco);
 
 /* ==========================================================================
    TEMPORIZADORES — contra Date.now(), con anillo que se vacía
@@ -2052,14 +2182,23 @@ function tickTimers(alVolver) {
     const t = s[clave];
     if (!t) continue;
     const resta = (t.fin - ahora) / 1000;
-    // La campana ya quedó agendada en el hilo de audio al arrancar el timer.
-    // Este toque es el respaldo para cuando ese agendado no se pudo hacer.
+    /* `sono` solo se marca cuando la campana sonó de verdad:
+       - si el nodo agendado disparó, `campanaYaSono` lo confirma;
+       - si sigue esperando y el contexto corre, se le da margen;
+       - si no, se toca ahora. Estando afuera el tick no corre, así que al
+         volver esto se ejecuta y suena en el acto lo que venció mientras tanto. */
     if (resta <= 0 && !t.sono) {
-      t.sono = true;
-      if (!t.agendada) sonarCampana();
-      else vibrar("confirmar");
-      cancelarCampana(clave);
-      guardarSesion();
+      if (campanaYaSono(clave)) {
+        t.sono = true;
+        vibrar("confirmar");
+        cancelarCampana(clave);
+        guardarSesion();
+      } else if (!campanaEnEspera(clave) || resta <= -0.6) {
+        t.sono = true;
+        cancelarCampana(clave);
+        sonarCampana();
+        guardarSesion();
+      }
     }
     const nodo = $(`#t-${clave}`);
     if (nodo) {
@@ -2159,24 +2298,38 @@ function pintarBarraDescanso() {
    localStorage queda solo como caché de arranque rápido. */
 function limpiarSesionLocal() { localStorage.removeItem("sesionActiva"); }
 
-/* Lo que se persiste de la sesión. `cola` y `prMax` no van: se regeneran. */
+/* La copia local que SÍ se lee: es el respaldo de arranque para cuando
+   Firestore todavía no repartió los datos. */
+function sesionLocalGuardada() {
+  try {
+    const s = JSON.parse(localStorage.getItem("sesionActiva") || "null");
+    return s && s.rutinaId && s.fecha ? s : null;
+  } catch (_) { return null; }
+}
+
+/* Lo que se persiste de la sesión. `cola` y `prMax` no van: se regeneran.
+   Los temporizadores SÍ van, con su instante absoluto, para que un descanso o
+   un bloque de 7 minutos sobrevivan a una recarga. */
 function sesionParaGuardar(s) {
+  const t = (x) => (x ? { fin: x.fin, dur: x.dur, etiqueta: x.etiqueta || null, sono: !!x.sono } : null);
   return {
     abierta: true, rutinaId: s.rutinaId, fecha: s.fecha,
     esRecuperacion: !!s.esRecuperacion, fechaOriginal: s.fechaOriginal || null,
     esPrueba: !!s.esPrueba, inicio: s.inicio, paso: s.paso,
     calorHecho: s.calorHecho || {}, pesoActual: s.pesoActual || {},
     repsActual: s.repsActual || {}, tocada: Date.now(),
+    timer: t(s.timer), descanso: t(s.descanso),
     // El día real en que se está entrenando, que puede no ser el día que cubre
     // (una pendiente que se recupera, o una sesión que se adelanta).
     hechoEl: s.hechoEl || s.fecha,
   };
 }
 
-/* Autoguardado: cada cambio del estado de la sesión, no solo al marcar serie.
-   Se agrupa a 1,2 s para no escribir en cada toque del botón de peso. */
+/* Autoguardado. Por defecto va al instante: el paso, los pesos y las
+   repeticiones no se pueden perder si el sistema descarta la pestaña. El
+   retardo queda solo para lo que no duele perder, como el tick del timer. */
 let guardarSesionTimer = null;
-function guardarSesion({ yaMismo = false } = {}) {
+function guardarSesion({ diferido = false } = {}) {
   try {
     if (S.sesion) localStorage.setItem("sesionActiva", JSON.stringify(S.sesion));
     else localStorage.removeItem("sesionActiva");
@@ -2188,8 +2341,8 @@ function guardarSesion({ yaMismo = false } = {}) {
     guardarDia(S.sesion.fecha, { sesion: sesionParaGuardar(S.sesion) },
       { queHacia: "el avance del entrenamiento" });
   };
-  if (yaMismo) escribirla();
-  else guardarSesionTimer = setTimeout(escribirla, 1200);
+  if (diferido) guardarSesionTimer = setTimeout(escribirla, 1200);
+  else escribirla();
 }
 
 /* Cualquier día con una sesión abierta, sin importar la fecha. */
@@ -2200,20 +2353,32 @@ function diaConSesionAbierta() {
   return null;
 }
 
-/* Rehidrata una sesión guardada en Firestore a la forma que usa la app. */
+/* Rehidrata una sesión guardada a la forma que usa la app. Los temporizadores
+   se recalculan contra su instante absoluto: si vencieron mientras la app
+   estaba cerrada, quedan vencidos y el tick los resuelve. */
 function sesionDesdeRegistro(fecha, reg) {
   const g = reg.sesion;
+  const revivir = (x) => (x && x.fin ? { ...x, agendada: false } : null);
   return {
     fecha, rutinaId: g.rutinaId,
     esRecuperacion: !!g.esRecuperacion, fechaOriginal: g.fechaOriginal || null,
+    hechoEl: g.hechoEl || fecha,
     esPrueba: !!g.esPrueba, inicio: g.inicio, paso: g.paso || 0,
     cola: armarCola(g.rutinaId),
     calorHecho: g.calorHecho || {}, pesoActual: g.pesoActual || {},
     repsActual: g.repsActual || {},
     vueltas: reg.vueltas || (g.rutinaId === "intervalos" ? [0, 0, 0, 0] : null),
-    timer: null, descanso: null,
+    timer: revivir(g.timer), descanso: revivir(g.descanso),
     prMax: maximosHistoricos(),
   };
+}
+
+/* Vuelve a agendar la campana de los temporizadores que siguen corriendo. */
+function reagendarTemporizadores() {
+  for (const clave of ["timer", "descanso"]) {
+    const t = S.sesion?.[clave];
+    if (t && !t.sono && t.fin > Date.now()) t.agendada = agendarCampana(clave, t.fin);
+  }
 }
 
 function armarCola(rutinaId) {
@@ -2487,9 +2652,18 @@ async function iniciarEntrenamiento({ fecha, rutinaId, esRecuperacion, fechaOrig
 
 function retomarSesion(fecha) {
   desbloquearAudio();
-  const reg = S.dias.get(fecha);
-  if (!reg?.sesion?.abierta) return false;
+  let reg = S.dias.get(fecha);
+  // Si Firestore todavía no repartió los datos, se arranca con la copia local
+  // y el snapshot la corrige apenas llega.
+  if (!reg?.sesion?.abierta) {
+    const local = sesionLocalGuardada();
+    if (local && local.fecha === fecha) {
+      reg = { ...(reg || {}), sesion: sesionParaGuardar(local), vueltas: local.vueltas };
+      logAuth("sesión retomada desde la copia local");
+    } else return false;
+  }
   S.sesion = sesionDesdeRegistro(fecha, reg);
+  reagendarTemporizadores();
   guardarSesion();
   pedirWakeLock();
   arrancarTickeo();
@@ -2593,7 +2767,7 @@ function salirDeSesion() {
     </div>`);
   $("#salir-si").onclick = () => {
     cerrarHoja(true);
-    guardarSesion({ yaMismo: true });
+    guardarSesion();
     soltarWakeLock();
     irA("inicio");
   };
@@ -4531,9 +4705,69 @@ $("#cal-sig").addEventListener("click", () => {
   renderCalendario();
 });
 
+/* ==========================================================================
+   ACTUALIZACIÓN — que no haga falta borrar la caché nunca más
+   --------------------------------------------------------------------------
+   El service worker nuevo se queda esperando (ya no hace skipWaiting solo).
+   La app avisa con una franja, y recién al tocar "Actualizar" toma el control
+   y recarga. Si hay un entrenamiento abierto, el aviso espera: nunca se
+   actualiza en medio de una sesión.
+   ========================================================================== */
+let registroSW = null;
+let swEsperando = null;
+let recargandoPorSW = false;
+
+function pintarAvisoVersion() {
+  const caja = $("#aviso-version");
+  if (!caja) return;
+  // Con una sesión abierta el aviso no aparece: se muestra al cerrarla.
+  caja.classList.toggle("oculta", !swEsperando || !!S.sesion);
+}
+
+function aplicarActualizacion() {
+  if (!swEsperando) return;
+  swEsperando.postMessage({ tipo: "tomarControl" });
+}
+
+function buscarActualizacion() {
+  if (!registroSW) return;
+  registroSW.update().catch(() => { });
+}
+
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js").catch(() => { });
+  window.addEventListener("load", async () => {
+    try {
+      registroSW = await navigator.serviceWorker.register("sw.js");
+    } catch (_) { return; }
+
+    const revisar = () => {
+      const nuevo = registroSW.waiting;
+      // Solo avisa si ya había un worker controlando: en la primera visita no
+      // hay nada que actualizar.
+      if (nuevo && navigator.serviceWorker.controller) {
+        swEsperando = nuevo;
+        pintarAvisoVersion();
+      }
+    };
+    revisar();
+    registroSW.addEventListener("updatefound", () => {
+      const nuevo = registroSW.installing;
+      if (!nuevo) return;
+      nuevo.addEventListener("statechange", () => { if (nuevo.state === "installed") revisar(); });
+    });
+
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (recargandoPorSW) return;
+      recargandoPorSW = true;
+      location.reload();
+    });
+
+    const btn = $("#aviso-version-btn");
+    if (btn) btn.onclick = () => {
+      btn.disabled = true;
+      btn.textContent = "Actualizando…";
+      aplicarActualizacion();
+    };
   });
 }
 
@@ -4541,6 +4775,8 @@ if ("serviceWorker" in navigator) {
 window.addEventListener("online", () => {
   logAuth("volvió la conexión");
   if (vistaActual === "login") { $("#login-aviso").classList.add("oculta"); prepararGoogle(); }
+  // Estábamos esperando red con una sesión conocida: se recarga para retomarla.
+  if ($("#espera-sin-red")) location.reload();
 });
 
 /* Arranque: pantalla de carga hasta que la autenticación se resuelva */

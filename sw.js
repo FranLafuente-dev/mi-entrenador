@@ -6,7 +6,7 @@
    dispositivos se actualicen.
    ========================================================================== */
 
-const VERSION = "v8";
+const VERSION = "v9";
 const CACHE = `mi-entrenador-${VERSION}`;
 
 const ARCHIVOS = [
@@ -48,10 +48,15 @@ const ARCHIVOS = [
   "img/ejercicios/sentadilla-con-press.webp",
 ];
 
+/* Ojo: NO se hace skipWaiting acá. El worker nuevo espera a que la app avise
+   al usuario y él toque "Actualizar", así nunca se cambia la versión en medio
+   de un entrenamiento. */
 self.addEventListener("install", (e) => {
-  e.waitUntil(
-    caches.open(CACHE).then((c) => c.addAll(ARCHIVOS)).then(() => self.skipWaiting())
-  );
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ARCHIVOS)));
+});
+
+self.addEventListener("message", (e) => {
+  if (e.data?.tipo === "tomarControl") self.skipWaiting();
 });
 
 self.addEventListener("activate", (e) => {

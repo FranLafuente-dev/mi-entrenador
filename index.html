@@ -27,7 +27,8 @@
       <h1>Mi Entrenador</h1>
       <p class="login-sub">Presentate, soldado.</p>
       <div id="gis-boton" class="gis-boton"></div>
-      <button id="btn-login" class="btn btn-borde btn-grande">Entrar con Google</button>
+      <!-- Respaldo: solo aparece si Google no llegó a dibujar el suyo -->
+      <button id="btn-login" class="btn btn-borde btn-grande oculta">Entrar con Google</button>
       <div id="login-error" class="login-error oculta"></div>
       <div id="login-aviso" class="login-aviso oculta"></div>
     </div>
@@ -146,6 +147,14 @@
   <div id="hoja-contenido"></div>
 </div>
 <div id="banner" class="banner oculta"></div>
+<div id="aviso-version" class="franja-aviso oculta">
+  <span>Hay una versión nueva</span>
+  <button id="aviso-version-btn" class="btn btn-medio">Actualizar</button>
+</div>
+<div id="aviso-audio" class="franja-aviso franja-alerta oculta">
+  <span>El sistema se quedó con el audio. La campana no va a sonar.</span>
+  <button class="btn btn-medio">Reactivar</button>
+</div>
 <div id="barra-descanso" class="barra-descanso oculta" role="timer">
   <div class="bd-tiempo">
     <span class="bd-num num" id="bd-num">0:00</span>
