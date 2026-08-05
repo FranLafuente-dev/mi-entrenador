@@ -183,13 +183,20 @@ img { max-width: 100%; display: block; }
 .vista-inicio .racha-galones svg { width: clamp(20px, 6vw, 30px); height: auto; }
 .vista-inicio .anillo { width: clamp(38px, 6vh, 52px); height: clamp(38px, 6vh, 52px); }
 
-/* Pantallas bajas: los logros se pliegan dentro de la tarjeta de racha */
-#logros-en-racha { display: none; }
-#logros-en-racha .logros-fila { justify-content: center; margin-top: 8px; }
-@media (max-height: 780px) {
+/* Los logros SIEMPRE se ven: son lo que motiva. En pantallas de teléfono se
+   pliegan dentro de la tarjeta de rango en vez de ocupar su propia fila, pero
+   nunca se ocultan. */
+#logros-en-racha:empty { display: none; }
+#logros-en-racha .logros-fila { margin-top: 8px; gap: 6px; }
+#logros-en-racha .logro {
+  font-size: 12px; padding: 4px 10px;
+  background: rgba(255,255,255,.10); border-color: rgba(255,255,255,.16);
+}
+.racha.r-base #logros-en-racha .logro {
+  background: var(--superficie2); border-color: var(--separador);
+}
+@media (max-height: 900px) {
   .vista-inicio #logros-zona { display: none; }
-  .vista-inicio #logros-en-racha { display: block; }
-  .vista-inicio #logros-en-racha .logro { font-size: 11px; padding: 4px 10px; }
 }
 
 /* Más bajas: se van los adornos y las líneas secundarias, en este orden.
@@ -207,10 +214,11 @@ img { max-width: 100%; display: block; }
 @media (max-height: 700px) {
   .vista-inicio .fila-2 .tarjeta-nota { display: none; }
   .vista-inicio .tarjeta-peso .tarjeta-nota { display: none; }
-  .vista-inicio #logros-en-racha { display: none; }
+  .vista-inicio .racha-extra { display: none; }
   .vista-inicio .racha-semana { font-size: 13px; }
   .vista-inicio .insignia { width: 52px; height: 66px; }
   .vista-inicio .racha { padding: 12px 16px; gap: 12px; }
+  .vista-inicio #logros-en-racha .logro { font-size: 11px; padding: 3px 8px; }
 }
 /* Al límite: la tarjeta de peso se reduce a una sola línea */
 @media (max-height: 620px) {
@@ -343,13 +351,22 @@ img { max-width: 100%; display: block; }
 }
 .racha:active { transform: scale(0.98); }
 .racha-datos { flex: 1; min-width: 0; }
-.racha-rango { font-size: 13px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; }
-.racha-num { font-size: clamp(22px, 3.6vh, 30px); font-weight: 700; letter-spacing: -1px; margin: 2px 0 8px; font-variant-numeric: tabular-nums; }
-.racha-num small { font-size: 14px; font-weight: 500; letter-spacing: 0; }
-.racha-linea { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.racha-galones { display: flex; gap: 6px; }
-.racha-galones svg { width: 22px; height: 19px; }
-.racha-semana { font-size: 14px; font-weight: 600; }
+/* El rango es el titular de la tarjeta: tiene que leerse primero y de lejos. */
+.racha-rango {
+  font-size: clamp(16px, 2.4vh, 20px); font-weight: 700;
+  letter-spacing: -0.2px; line-height: 1.1;
+}
+.racha-num {
+  font-size: clamp(13px, 1.8vh, 15px); font-weight: 500;
+  color: inherit; opacity: .7; margin: 2px 0 10px;
+  font-variant-numeric: tabular-nums;
+}
+.racha-num small { font-size: inherit; font-weight: 500; }
+/* Los galones de la semana y el contador, en su propia línea y con aire */
+.racha-linea { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.racha-galones { display: flex; gap: 5px; }
+.racha-galones svg { width: 24px; height: 21px; }
+.racha-semana { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .racha-falta { font-size: 12px; margin-top: 6px; }
 .racha-alerta { font-size: 12px; font-weight: 700; color: var(--rojo); margin-top: 8px; }
 .racha-congelada { font-size: 12px; font-weight: 700; color: var(--amarillo); margin-top: 8px; }
@@ -426,7 +443,9 @@ img { max-width: 100%; display: block; }
 
 /* --- Anillo de progreso ---------------------------------------------------- */
 .anillo { position: relative; width: 52px; height: 52px; align-self: flex-end; }
-.anillo svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+/* El giro es para que el anillo arranque arriba. NO alcanza a la tilde, que
+   tiene que quedar derecha. */
+.anillo > svg:not(.tilde-svg) { width: 100%; height: 100%; transform: rotate(-90deg); }
 .anillo .pista { fill: none; stroke: var(--separador); stroke-width: 5; }
 .anillo .valor {
   fill: none; stroke: var(--verde); stroke-width: 5; stroke-linecap: round;
@@ -434,7 +453,7 @@ img { max-width: 100%; display: block; }
 }
 .anillo.pulso { animation: anillo-pulso var(--t-rebote) var(--curva-rebote); }
 @keyframes anillo-pulso { 50% { transform: scale(1.12); } }
-.anillo .tilde-svg { position: absolute; inset: 14px; }
+.anillo .tilde-svg { position: absolute; inset: 14px; transform: none; }
 .anillo .tilde-svg path {
   fill: none; stroke: var(--verde); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round;
   stroke-dasharray: 30; stroke-dashoffset: 30;
@@ -550,7 +569,6 @@ img { max-width: 100%; display: block; }
   overscroll-behavior: contain;
   padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 84px);
 }
-.hoja { position: relative; }
 .vista-entreno .tarjeta, .vista-entreno .btn-borde, .vista-entreno .btn-suave { background: #1C1C1E; border-color: rgba(255,255,255,.12); }
 .vista-entreno .btn-primario { background: #F5F5F7; color: #000; }
 .entreno-cabecera {

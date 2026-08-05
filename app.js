@@ -308,17 +308,18 @@ function svgGalon(estado, extra = "") {
 }
 
 /* La insignia del rango: el elemento visual más fuerte del inicio. Escudo con
-   tres galones adentro, el de arriba en rojo a partir de Sargento Primero. */
+   tres galones GRANDES y centrados, el de arriba en rojo desde Sargento
+   Primero. Los galones tienen que leerse de un vistazo a 52 px. */
 function svgInsignia(clase) {
   const galon = (y, cls) =>
-    `<path class="ins-galon ${cls}" d="M20 ${y} 34 ${y - 9} 48 ${y}v6L34 ${y - 3} 20 ${y + 6}z"/>`;
+    `<path class="ins-galon ${cls}" d="M14 ${y + 13} 34 ${y} 54 ${y + 13}v9L34 ${y + 9} 14 ${y + 22}z"/>`;
   return `
     <svg class="insignia" viewBox="0 0 68 84" aria-hidden="true">
-      <path class="ins-escudo" d="M34 2 64 12v32c0 20-13 31-30 38C17 75 4 64 4 44V12z"/>
-      ${galon(44, clase === "r-elite" ? "ins-rojo" : "")}
-      ${galon(56, "")}
-      ${galon(68, "")}
-      <rect class="ins-brillo" x="0" y="0" width="24" height="84"/>
+      <path class="ins-escudo" d="M34 3 63 13v29c0 19-12 30-29 39C18 72 5 61 5 42V13z"/>
+      ${galon(16, clase === "r-elite" ? "ins-rojo" : "")}
+      ${galon(32, "")}
+      ${galon(48, "")}
+      <rect class="ins-brillo" x="-14" y="0" width="18" height="84"/>
     </svg>`;
 }
 function svgAnillo(pct, { tilde = false } = {}) {
