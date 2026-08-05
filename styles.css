@@ -405,7 +405,7 @@ img { max-width: 100%; display: block; }
   backdrop-filter: blur(24px) saturate(180%);
   border: 1px solid var(--separador);
   box-shadow: 0 8px 24px rgba(0,0,0,.10);
-  display: grid; grid-template-columns: repeat(4, 1fr);
+  display: grid; grid-template-columns: repeat(5, 1fr);
   align-items: center;
   transition: transform var(--t) var(--curva), opacity var(--t) var(--curva);
 }
@@ -493,7 +493,13 @@ img { max-width: 100%; display: block; }
 .agua-registros li span { color: var(--texto2); }
 
 /* --- Entrenamiento --------------------------------------------------------- */
-.vista-entreno { background: #000; color: #F5F5F7; }
+.vista-entreno {
+  background: #000; color: #F5F5F7;
+  /* Sin tirón para recargar: en medio de una sesión no se recarga nada */
+  overscroll-behavior: contain;
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 84px);
+}
+.hoja { position: relative; }
 .vista-entreno .tarjeta, .vista-entreno .btn-borde, .vista-entreno .btn-suave { background: #1C1C1E; border-color: rgba(255,255,255,.12); }
 .vista-entreno .btn-primario { background: #F5F5F7; color: #000; }
 .entreno-cabecera {
@@ -930,6 +936,146 @@ body:has(#vista-entreno:not(.oculta)) .barra-descanso {
 .barra-descanso.fin { border-color: var(--verde); }
 .barra-descanso.fin .bd-num, .barra-descanso.fin .bd-etiqueta { color: var(--verde); }
 .barra-descanso.bd-bloque .bd-num { color: var(--rojo); }
+
+/* --- Banner de sesión en curso: la única barra roja entera ----------------- */
+.barra-sesion {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 60;
+  background: var(--rojo); color: #fff;
+  border: none; width: 100%; text-align: left;
+  padding: calc(env(safe-area-inset-top, 0px) + 10px) 16px 10px;
+  display: flex; align-items: center; gap: 12px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.16), 0 8px 24px rgba(0,0,0,.14);
+  animation: bs-entra var(--t-entrada) var(--curva-entrada);
+}
+@keyframes bs-entra { from { transform: translateY(-100%); } }
+.bs-punto { font-size: 12px; animation: bs-late 2s ease infinite; }
+@keyframes bs-late { 50% { opacity: .35; } }
+.bs-texto { flex: 1; min-width: 0; }
+.bs-titulo {
+  display: block; font-size: 13px; font-weight: 700;
+  letter-spacing: 0.6px; font-variant-numeric: tabular-nums;
+}
+.bs-detalle {
+  display: block; font-size: 13px; opacity: .9; margin-top: 1px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bs-flecha { font-size: 18px; opacity: .9; }
+/* Empuja el contenido, no lo tapa */
+body.con-barra-sesion #lienzo { padding-top: 58px; }
+
+/* --- Deshacer -------------------------------------------------------------- */
+.deshacer {
+  position: fixed; z-index: 87;
+  left: 20px; right: 20px; max-width: 560px; margin: 0 auto;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 96px);
+  background: var(--texto); color: var(--fondo);
+  border-radius: var(--r-boton); padding: 10px 10px 10px 16px;
+  display: flex; align-items: center; gap: 12px;
+  font-size: 14px; font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0,0,0,.16), 0 8px 24px rgba(0,0,0,.14);
+  animation: toast-in var(--t) var(--curva-entrada);
+}
+.deshacer span { flex: 1; }
+.deshacer .btn { background: var(--fondo); color: var(--texto); min-height: 40px; flex: none; }
+
+/* --- Botones de completar (los dos verdes) --------------------------------- */
+.btn-completar {
+  width: 100%; min-height: 64px; border-radius: var(--r-boton);
+  background: var(--verde); color: #04220d;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 2px; padding: 10px 16px;
+  transition: transform 120ms ease, filter 120ms ease;
+  box-shadow: 0 1px 2px rgba(0,0,0,.22), 0 8px 20px rgba(48,209,88,.18);
+}
+.btn-completar:active { transform: scale(0.97); filter: brightness(0.95); }
+.btn-completar .bc-titulo { font-size: 17px; font-weight: 700; letter-spacing: 0.4px; }
+.btn-completar .bc-dato { font-size: 13px; font-weight: 600; opacity: .75; }
+.btn-completar-borde {
+  min-height: 54px; background: transparent; color: var(--verde);
+  border: 2px solid var(--verde); box-shadow: none;
+}
+.btn-completar-borde .bc-titulo { font-size: 15px; }
+
+/* --- Barra de la rutina, al pie de la sesión ------------------------------- */
+.rutina-barra {
+  position: fixed; left: 0; right: 0; z-index: 44;
+  bottom: 0; width: 100%;
+  background: rgba(20,20,22,.92);
+  -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+  border-top: 1px solid rgba(255,255,255,.10);
+  color: #F5F5F7; text-align: left;
+  padding: 10px 20px calc(env(safe-area-inset-bottom, 0px) + 10px);
+  display: flex; align-items: center; gap: 12px; min-height: 56px;
+}
+.rb-puntos { display: flex; gap: 4px; flex: none; }
+.rb-punto {
+  width: 7px; height: 7px; border-radius: 50%;
+  border: 1px solid rgba(255,255,255,.45); display: inline-block;
+}
+.rb-punto.rb-hecho { background: var(--verde); border-color: var(--verde); }
+.rb-punto.rb-actual { background: #fff; border-color: #fff; transform: scale(1.4); }
+.rb-punto.rb-salteado { background: var(--amarillo); border-color: var(--amarillo); }
+.rb-texto {
+  flex: 1; font-size: 13px; color: #C9C9CE;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rb-flecha { color: #98989D; font-size: 12px; }
+
+/* --- Panel de la rutina, a pantalla completa ------------------------------- */
+.rutina-panel {
+  position: fixed; inset: 0; z-index: 70;
+  background: #0A0A0B; color: #F5F5F7;
+  overflow-y: auto; overscroll-behavior: contain;
+  padding: calc(env(safe-area-inset-top, 0px) + 16px) 20px
+           calc(env(safe-area-inset-bottom, 0px) + 24px);
+  opacity: 0; transform: translateY(16px);
+  transition: opacity var(--t) var(--curva), transform var(--t) var(--curva);
+}
+.rutina-panel.visible { opacity: 1; transform: none; }
+.rp-cabecera { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.rp-resumen { flex: 1; display: flex; gap: 20px; }
+.rp-resumen span { display: flex; flex-direction: column; }
+.rp-resumen b { font-size: 20px; font-weight: 700; letter-spacing: -0.4px; }
+.rp-resumen small { font-size: 11px; color: #98989D; text-transform: uppercase; letter-spacing: 0.6px; }
+.rp-cabecera .btn { background: #1C1C1E; border-color: rgba(255,255,255,.14); color: #F5F5F7; }
+.rp-lista { display: grid; gap: 8px; }
+.rp-fila {
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+  background: #141416; border: 1px solid rgba(255,255,255,.10);
+  border-radius: var(--r-boton); padding: 10px 14px; min-height: 64px;
+  transition: transform 120ms ease;
+}
+.rp-fila:active { transform: scale(0.98); }
+.rp-fila img { width: 48px; height: 48px; object-fit: contain; border-radius: 10px; background: #1C1C1E; flex: none; }
+.rp-sin-img { width: 48px; height: 48px; flex: none; }
+.rp-cuerpo { flex: 1; min-width: 0; }
+.rp-nombre { display: block; font-size: 15px; font-weight: 600; }
+.rp-dato { display: block; font-size: 13px; color: #98989D; font-variant-numeric: tabular-nums; }
+.rp-estado { font-size: 15px; flex: none; }
+.rp-fila.rp-actual { border-color: #fff; background: #1C1C1E; }
+.rp-fila.rp-hecho .rp-nombre { color: var(--verde); }
+.rp-fila.rp-salteado { border-color: var(--amarillo); }
+
+/* --- Vista previa de la rutina y enlaces del registro ---------------------- */
+.previa-lista { display: grid; gap: 4px; margin: 16px 0 8px; }
+.previa-fila {
+  display: flex; align-items: center; gap: 12px;
+  padding: 6px 0; border-bottom: 1px solid var(--separador);
+}
+.previa-fila img { width: 40px; height: 40px; object-fit: contain; border-radius: 8px; background: var(--superficie); flex: none; }
+.previa-nombre { flex: 1; font-size: 14px; }
+.previa-dato { font-size: 13px; color: var(--texto2); font-variant-numeric: tabular-nums; }
+.registro-enlaces { display: grid; gap: 0; margin-top: 8px; }
+.registro-enlaces .btn-texto { width: 100%; text-align: center; font-size: 14px; min-height: 40px; }
+
+/* Botón de cerrar en todas las hojas */
+.hoja-cerrar {
+  position: absolute; top: 10px; right: 14px; z-index: 2;
+  width: 34px; height: 34px; border-radius: 50%;
+  background: var(--superficie); color: var(--texto2);
+  font-size: 15px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
 
 /* --- Franjas de aviso (versión nueva, audio retenido) ---------------------- */
 .franja-aviso {

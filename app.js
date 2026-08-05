@@ -181,6 +181,55 @@ function toast(texto, tipo = "", dur = 4200) {
   setTimeout(() => t.remove(), dur);
 }
 
+/* ==========================================================================
+   DESHACER — un solo mecanismo para todas las acciones que borran o avanzan
+   --------------------------------------------------------------------------
+   Ocho segundos con un botón. `revertir` tiene que devolver el estado exacto
+   anterior, incluidos los temporizadores y lo ya escrito en Firestore.
+   ========================================================================== */
+let deshacerTimer = null;
+
+function ofrecerDeshacer(texto, revertir) {
+  const caja = $("#deshacer");
+  if (!caja) return;
+  clearTimeout(deshacerTimer);
+  caja.innerHTML = `<span>${esc(texto)}</span>`;
+  const btn = el("button", "btn btn-medio", "Deshacer");
+  caja.appendChild(btn);
+  caja.classList.remove("oculta");
+
+  const cerrar = () => { caja.classList.add("oculta"); caja.innerHTML = ""; };
+  btn.onclick = async () => {
+    clearTimeout(deshacerTimer);
+    btn.disabled = true;
+    try { await revertir(); vibrar("leve"); }
+    catch (e) { anotarProblema(`deshacer falló: ${e?.message || e}`); }
+    cerrar();
+  };
+  deshacerTimer = setTimeout(cerrar, 8000);
+}
+
+/* ==========================================================================
+   BITÁCORA DE PROBLEMAS — entrenando no se puede anotar nada a mano
+   ========================================================================== */
+function anotarProblema(texto, automatico = true) {
+  const nota = {
+    hora: Date.now(), pantalla: vistaActual,
+    texto: String(texto || "").slice(0, 400), automatico,
+  };
+  try {
+    const previas = JSON.parse(localStorage.getItem("bitacora") || "[]");
+    previas.push(nota);
+    localStorage.setItem("bitacora", JSON.stringify(previas.slice(-80)));
+  } catch (_) { }
+  if (automatico) console.warn("[problema]", nota.texto);
+}
+function leerBitacora() {
+  try { return JSON.parse(localStorage.getItem("bitacora") || "[]"); }
+  catch (_) { return []; }
+}
+function borrarBitacora() { localStorage.removeItem("bitacora"); }
+
 /* --- Vibración: tres patrones y nada más (solo si la API existe) --- */
 const VIBRA = { leve: 10, confirmar: [30, 40, 30], celebrar: [50, 80, 50, 80, 120] };
 function vibrar(tipo) {
@@ -951,7 +1000,13 @@ async function procesarSemanasCerradas() {
           if (escudoDisponible(mes)) {
             const usa = await preguntarEscudo(r);
             if (usa) {
+              const escudosAntes = { ...(S.config.escudos || {}) };
               await guardarConfig({ escudos: conEscudoAnotado(mes, r.clave) });
+              ofrecerDeshacer("Escudo usado", async () => {
+                await guardarConfig({ escudos: escudosAntes }, { queHacia: "el escudo" });
+                await setDoc(refs.semana(r.clave), { escudo: false, decidida: false }, { merge: true });
+                refrescarVistaActual();
+              });
               const marca = { clave: r.clave, escudo: true, decidida: true };
               S.semanas.set(r.clave, { ...(guardada || {}), ...marca });
               await setDoc(refs.semana(r.clave), marca, { merge: true });
@@ -1032,7 +1087,7 @@ function preguntarEscudo(r) {
 /* ==========================================================================
    NAVEGACIÓN — vistas con transición y tabbar
    ========================================================================== */
-const VISTAS = ["login", "carga", "inicio", "calendario", "progreso", "ajustes", "entreno"];
+const VISTAS = ["login", "carga", "inicio", "calendario", "progreso", "peso", "ajustes", "entreno"];
 let vistaActual = "carga";
 
 function mostrarVista(nombre) {
@@ -1041,7 +1096,9 @@ function mostrarVista(nombre) {
   actualizarTabbar();
   refrescarVistaActual();
   pintarBarraDescanso();     // el descanso sigue a la vista, no al revés
+  pintarBarraSesion();
   pintarAvisoVersion();      // al cerrarse la sesión, el aviso puede aparecer
+  ponerRedHistorial();       // que atrás pueda volver al inicio
   window.scrollTo(0, 0);
 }
 
@@ -1081,9 +1138,67 @@ function refrescarVistaActual() {
   if (!S.cargado && !["login", "carga"].includes(vistaActual)) return;
   if (vistaActual === "inicio") renderInicio();
   else if (vistaActual === "calendario") renderCalendario();
-  else if (vistaActual === "progreso") renderProgreso();
+  else if (vistaActual === "progreso") renderHistorial();
+  else if (vistaActual === "peso") renderPeso();
   else if (vistaActual === "ajustes") renderAjustes();
   else if (vistaActual === "entreno" && S.sesion) renderPasoSesion();
+}
+
+/* ==========================================================================
+   BANNER DE SESIÓN EN CURSO — rojo lleno, en todas las pantallas
+   --------------------------------------------------------------------------
+   Es la única vez que el rojo ocupa una barra entera: tiene que molestar.
+   No se puede cerrar; se va cuando la sesión se cierra.
+   ========================================================================== */
+function pintarBarraSesion() {
+  const barra = $("#barra-sesion");
+  if (!barra) return;
+  const abierta = S.cargado ? diaConSesionAbierta() : null;
+  const hayAlgo = !!(S.sesion || abierta);
+  const mostrar = hayAlgo && vistaActual !== "entreno" &&
+    !["login", "carga"].includes(vistaActual);
+
+  barra.classList.toggle("oculta", !mostrar);
+  document.body.classList.toggle("con-barra-sesion", mostrar);
+  if (!mostrar) return;
+
+  const s = S.sesion;
+  const fecha = s?.fecha || abierta.fecha;
+  const reg = S.dias.get(fecha) || {};
+  const rutinaId = s?.rutinaId || reg.sesion?.rutinaId;
+  const deHoy = (s?.hechoEl || reg.sesion?.hechoEl || fecha) === hoyISO();
+
+  if (deHoy && s) {
+    const seg = (Date.now() - s.inicio) / 1000;
+    $("#bs-titulo").textContent = `ESTÁS ENTRENANDO · ${fmtCrono(seg)}`;
+    $("#bs-detalle").textContent = `${RUTINAS[rutinaId]?.nombre || ""} · ${dondeVaLaSesion(s)}`;
+  } else if (deHoy) {
+    $("#bs-titulo").textContent = "ENTRENAMIENTO SIN CERRAR";
+    $("#bs-detalle").textContent = `${RUTINAS[rutinaId]?.nombre || ""} · tocá para seguir`;
+  } else {
+    $("#bs-titulo").textContent = `SESIÓN DEL ${DIAS_NOMBRE[diaSemanaDe(fecha)].toUpperCase()} SIN CERRAR`;
+    $("#bs-detalle").textContent = `${RUTINAS[rutinaId]?.nombre || ""} · tocá para seguir`;
+  }
+  barra.onclick = () => { if (!S.sesion) retomarSesion(fecha); else irA("entreno"); };
+}
+
+/* "Dorsalera, serie 2" — en qué punto exacto quedó la sesión. */
+function dondeVaLaSesion(s) {
+  const paso = s.cola?.[s.paso];
+  if (!paso) return "terminando";
+  if (paso.t === "ej") {
+    const e = ejercicioPorId(paso.id);
+    const hechas = ((S.dias.get(s.fecha)?.series || {})[paso.id] || [])
+      .filter((x) => x?.hecha).length;
+    return `${e?.nombre || paso.id}, serie ${Math.min(hechas + 1, e?.series || 4)}`;
+  }
+  if (paso.t === "bloque") {
+    const n = s.cola.filter((p) => p.t === "bloque").indexOf(paso) + 1;
+    return `bloque ${n} de 8`;
+  }
+  if (paso.t === "calor" || paso.t === "movilidad") return "entrada en calor";
+  if (paso.t === "cinta-cierre") return "cinta de cierre";
+  return "parte de cierre";
 }
 
 
@@ -1094,7 +1209,8 @@ function refrescarVistaActual() {
    si el gesto es claramente horizontal (el doble que el vertical y más de 12 px),
    así no pelea con el scroll ni con el arrastre de las hojas.
    ========================================================================== */
-const ORDEN_SECCIONES = ["inicio", "calendario", "progreso", "ajustes"];
+/* Ajustes queda afuera: se llega solo por el engranaje, no deslizando. */
+const ORDEN_SECCIONES = ["inicio", "calendario", "progreso", "peso"];
 
 (function () {
   const lienzo = $("#lienzo");
@@ -1147,6 +1263,35 @@ const ORDEN_SECCIONES = ["inicio", "calendario", "progreso", "ajustes"];
 })();
 
 /* ==========================================================================
+   BOTÓN ATRÁS DE ANDROID
+   --------------------------------------------------------------------------
+   Sin esto, atrás cierra la app instalada aunque estés en medio de una hoja
+   con datos escritos. Se mantiene siempre una entrada de historial de sobra:
+   atrás la consume, la app decide qué cerrar y vuelve a poner otra. Solo se
+   deja salir cuando ya estás en el inicio y no hay nada abierto.
+   ========================================================================== */
+let redPuesta = false;
+
+/* Mantiene UNA entrada de reserva mientras haya algo que atrás pueda cerrar.
+   En el inicio y sin nada abierto no hay reserva, así que atrás sale de la
+   app como corresponde y no hay que tocarlo dos veces. */
+function ponerRedHistorial() {
+  const haceFalta = hojaAbierta || panelRutinaAbierto() || vistaActual !== "inicio";
+  if (haceFalta && !redPuesta) {
+    try { history.pushState({ red: true }, ""); redPuesta = true; } catch (_) { }
+  }
+}
+
+window.addEventListener("popstate", () => {
+  redPuesta = false;                        // la reserva se consumió
+  if (panelRutinaAbierto()) { cerrarPanelRutina(); ponerRedHistorial(); return; }
+  if (hojaAbierta) { cerrarHoja(); ponerRedHistorial(); return; }
+  if (vistaActual === "entreno") { salirDeSesion(); ponerRedHistorial(); return; }
+  if (vistaActual !== "inicio") { irA("inicio"); return; }
+  // En el inicio y sin nada abierto: se deja salir de verdad.
+});
+
+/* ==========================================================================
    HOJA MODAL — sube desde abajo, se cierra arrastrando, escala el fondo
    ========================================================================== */
 /* Pila de manejadores: cada hoja guarda el suyo. Antes era una sola variable
@@ -1196,6 +1341,7 @@ function abrirHoja(html, opts = {}) {
   requestAnimationFrame(() => $("#velo").classList.add("visible"));
   $("#lienzo").classList.add("atras");
   hojaAbierta = true;
+  ponerRedHistorial();                     // que atrás cierre la hoja
 }
 
 function cerrarHoja(silencioso) {
@@ -1211,6 +1357,7 @@ function cerrarHoja(silencioso) {
   if (!silencioso) correrManejador(entrada);
 }
 $("#velo").addEventListener("click", () => cerrarHoja());
+$("#hoja-cerrar").addEventListener("click", () => cerrarHoja());
 
 /* Arrastre para cerrar, siguiendo el dedo, con resistencia hacia arriba */
 (function () {
@@ -1709,10 +1856,8 @@ function hojaMas() {
   const abierta = diaConSesionAbierta();
   const items = [];
 
-  const esDescanso = plan.tipo === "descanso";
-  const caminata = { id: "mas-caminata", titulo: "Registrar caminata", dato: esDescanso ? "Suma para la mención de honor" : "" };
-  if (esDescanso) items.push(caminata);
-
+  // La caminata salió de acá: vive dentro de Registrar entrenamiento, para que
+  // toda la actividad física esté en un solo lugar.
   if (abierta) {
     items.push({
       id: "mas-continuar", titulo: "Continuar entrenamiento",
@@ -1733,7 +1878,6 @@ function hojaMas() {
   }
 
   items.push({ id: "mas-agua", titulo: "Registrar agua" });
-  if (!esDescanso) items.push(caminata);
   items.push({ id: "mas-peso", titulo: "Registrar peso" });
 
   abrirHoja(`
@@ -1838,10 +1982,14 @@ function hojaAgua(desde) {
     return guardar(registros, boton, reg?.aguaMl || 0);
   };
 
-  const borrar = (indice, boton) => {
+  const borrar = async (indice, boton) => {
     const reg = S.dias.get(hoy);
-    const registros = (reg?.aguaRegistros || []).filter((_, i) => i !== indice);
-    return guardar(registros, boton, reg?.aguaMl || 0);
+    const antes = [...(reg?.aguaRegistros || [])];
+    const borrado = antes[indice];
+    const registros = antes.filter((_, i) => i !== indice);
+    await guardar(registros, boton, reg?.aguaMl || 0);
+    ofrecerDeshacer(`${fmtNumero(Math.abs(borrado?.ml || 0), "ml")} ml borrados`,
+      () => guardar(antes, null, S.dias.get(hoy)?.aguaMl || 0));
   };
 
   pintar(true);
@@ -1934,17 +2082,28 @@ function hojaCausaMayor(fecha, hayEscudo) {
     const motivo = $("#cm-motivo").value.trim();
     if (!motivo) { $("#cm-motivo").focus(); return; }
     const conEscudo = hayEscudo && $("#cm-escudo")?.checked;
+    const antes = { ...(S.dias.get(fecha) || {}) };
     await guardarDia(fecha, {
       tipo: "entreno", rutinaId: planDelDia(fecha).rutina || null,
       rutinasVersion: RUTINAS_VERSION, estado: "causa-mayor", esPrueba: false,
       causaMayor: { usada: true, motivo, conEscudo: !!conEscudo },
     });
+    const escudosAntes = { ...(S.config.escudos || {}) };
     if (conEscudo) {
       await guardarConfig({ escudos: conEscudoAnotado(fecha.slice(0, 7), claveSemana(fecha)) });
       toast(sargento("escudoUsado"), "toast-alerta", 6000);
     }
     cerrarHoja(true);
     refrescarVistaActual();
+    ofrecerDeshacer("Día marcado como causa mayor", async () => {
+      await guardarDia(fecha, {
+        estado: antes.estado ?? null, causaMayor: null,
+        tipo: antes.tipo ?? planDelDia(fecha).tipo,
+      }, { queHacia: "la causa mayor" });
+      if (conEscudo) await guardarConfig({ escudos: escudosAntes }, { queHacia: "el escudo" });
+      await procesarSemanasCerradas();
+      refrescarVistaActual();
+    });
   };
 }
 
@@ -2214,6 +2373,7 @@ function tickTimers(alVolver) {
   const reloj = $("#entreno-reloj");
   if (reloj && s.inicio) reloj.textContent = fmtCrono((ahora - s.inicio) / 1000);
   pintarBarraDescanso();
+  if (vistaActual !== "entreno") pintarBarraSesion();   // el reloj del banner corre
 }
 
 function ponerTimer(seg, etiqueta) {
@@ -2258,12 +2418,21 @@ function reiniciarDescanso() {
 }
 
 function saltarDescanso() {
+  const previo = S.sesion?.descanso ? { ...S.sesion.descanso } : null;
   cancelarCampana("descanso");
   if (S.sesion) S.sesion.descanso = null;
   vibrar("leve");
   guardarSesion();
   pintarBarraDescanso();
   renderPasoSesion();
+  if (previo) ofrecerDeshacer("Descanso salteado", () => {
+    if (!S.sesion) return;
+    S.sesion.descanso = { ...previo, agendada: agendarCampana("descanso", previo.fin) };
+    guardarSesion();
+    arrancarTickeo();
+    pintarBarraDescanso();
+    renderPasoSesion();
+  });
 }
 
 /* ==========================================================================
@@ -2468,11 +2637,35 @@ function sesionesCubribles() {
   return opciones;
 }
 
-/* Paso 1: qué sesión cubre. Un toque si es la de hoy. */
+/* Los ejercicios que tocan, con el peso de la vez pasada: saber a qué vas. */
+function vistaPreviaRutina(rutinaId) {
+  const lista = rutinaId === "intervalos"
+    ? INTERVALOS.circuito
+    : MUSCULACION.bloques.flatMap((b) => b.ejercicios);
+  return `
+    <div class="previa-lista">
+      ${lista.map((e) => {
+        const previa = laVezPasada(e.id);
+        const dato = previa
+          ? `${fmtNumero(previa.peso, "carga")} kg × ${previa.reps}`
+          : (e.peso ? `${fmtNumero(e.peso, "carga")} kg` : `${e.series || 4} × ${e.reps}`);
+        return `
+          <div class="previa-fila">
+            <img src="img/ejercicios/${e.img}" alt="">
+            <span class="previa-nombre">${esc(e.nombre)}</span>
+            <span class="previa-dato num">${esc(dato)}</span>
+          </div>`;
+      }).join("")}
+    </div>`;
+}
+
+/* UNA sola hoja: la rutina de hoy ya elegida, la vista previa y la cámara.
+   El caso común es un toque y la cámara; lo demás son enlaces chicos abajo. */
 function pasoElegirRutina(ctx) {
   const r = RUTINAS[ctx.rutinaId];
   const esHoy = ctx.fecha === hoyISO();
   const otras = sesionesCubribles().filter((o) => o.cubre !== ctx.fecha || o.rutinaId !== ctx.rutinaId);
+  const otraRutina = ctx.rutinaId === "musculacion" ? "intervalos" : "musculacion";
 
   abrirHoja(`
     <h3>Registrar entrenamiento</h3>
@@ -2485,21 +2678,60 @@ function pasoElegirRutina(ctx) {
       ${esc(fmtFechaLarga(ctx.fechaOriginal || ctx.fecha))}. No gasta el escudo.</p>` : ""}
     ${ctx.adelanta ? `<p class="texto-2">Adelantás la sesión del
       ${esc(fmtFechaLarga(ctx.fecha))}. Adelantar no es una falta.</p>` : ""}
-    <div class="hoja-acciones">
-      <button id="reg-seguir" class="btn btn-rojo btn-grande">Continuar</button>
-      <button id="reg-cambiar" class="btn btn-texto">Cambiar de rutina (${esc(RUTINAS[ctx.rutinaId === "musculacion" ? "intervalos" : "musculacion"].nombre)})</button>
-    </div>
-    ${otras.length ? `
-      <div class="paso-indicador">O cubrir otra sesión</div>
-      <div class="accion-lista">
-        ${otras.map((o) => `<button class="accion-item" data-cubre="${o.clave}">
-          <span>${esc(o.titulo)}<span class="dato">${esc(o.dato)}</span></span></button>`).join("")}
-      </div>` : ""}`);
 
-  $("#reg-seguir").onclick = () => pasoFoto(ctx);
-  $("#reg-cambiar").onclick = () => pasoElegirRutina({
-    ...ctx, rutinaId: ctx.rutinaId === "musculacion" ? "intervalos" : "musculacion",
-  });
+    <div class="foto-zona oculta" id="reg-foto-zona"></div>
+    <input id="reg-foto-camara" type="file" accept="image/*" capture="environment" hidden>
+    <input id="reg-foto-galeria" type="file" accept="image/*" hidden>
+    <div class="hoja-acciones">
+      <button id="reg-camara" class="btn btn-rojo btn-gigante">📸 Sacar la foto y empezar</button>
+      <button id="reg-empezar" class="btn btn-primario btn-grande oculta">Empezar entrenamiento</button>
+    </div>
+
+    ${vistaPreviaRutina(ctx.rutinaId)}
+
+    <div class="registro-enlaces">
+      <button id="reg-galeria" class="btn btn-texto">Elegir la foto de la galería</button>
+      <button id="reg-cambiar" class="btn btn-texto">Cambiar a ${esc(RUTINAS[otraRutina].nombre)}</button>
+      ${otras.map((o) => `<button class="btn btn-texto" data-cubre="${o.clave}">${esc(o.titulo)}</button>`).join("")}
+      <button id="reg-caminata" class="btn btn-texto">Registrar una caminata</button>
+      <button id="reg-sin-foto" class="btn btn-texto">Empezar sin foto</button>
+    </div>`);
+
+  let fotoLista = null;
+  const zona = $("#reg-foto-zona");
+
+  const tomar = async (input) => {
+    const file = input.files?.[0];
+    if (!file) return;
+    zona.classList.remove("oculta");
+    zona.textContent = "Comprimiendo…";
+    try {
+      fotoLista = await comprimirFoto(file);
+      zona.innerHTML = `<img src="${fotoLista}" alt="Foto del gimnasio">`;
+      $("#reg-empezar").classList.remove("oculta");
+      $("#reg-camara").textContent = "Sacar otra";
+      vibrar("confirmar");
+    } catch (_) {
+      zona.textContent = "No se pudo procesar la foto. Probá con la galería.";
+      anotarProblema("no se pudo comprimir la foto del gimnasio");
+    }
+  };
+  $("#reg-foto-camara").onchange = (e) => tomar(e.target);
+  $("#reg-foto-galeria").onchange = (e) => tomar(e.target);
+  $("#reg-camara").onclick = () => $("#reg-foto-camara").click();
+  $("#reg-galeria").onclick = () => $("#reg-foto-galeria").click();
+
+  const arrancar = async (ev, foto) => {
+    const ok = await iniciarEntrenamiento({ ...ctx, foto, boton: ev.currentTarget });
+    if (ok) cerrarHoja(true);
+  };
+  $("#reg-empezar").onclick = (ev) => arrancar(ev, fotoLista);
+  $("#reg-sin-foto").onclick = async (ev) => {
+    await arrancar(ev, null);
+    toast("Sin foto por ahora. La podés agregar después desde el calendario.", "", 6000);
+  };
+  $("#reg-caminata").onclick = () => hojaCaminata();
+  $("#reg-cambiar").onclick = () => pasoElegirRutina({ ...ctx, rutinaId: otraRutina });
   $$("#hoja-contenido [data-cubre]").forEach((b) => {
     b.onclick = () => {
       const o = sesionesCubribles().find((x) => x.clave === b.dataset.cubre);
@@ -2511,58 +2743,6 @@ function pasoElegirRutina(ctx) {
       });
     };
   });
-}
-
-/* Paso 2: la foto. Cámara y galería valen igual; sin foto es el desvío. */
-function pasoFoto(ctx) {
-  abrirHoja(`
-    <h3>Foto del gimnasio</h3>
-    <p class="texto-2">Sacate la foto y el entrenamiento queda registrado al instante:
-    el día pasa a verde y la racha suma. Después entrás a la rutina.</p>
-    <div class="foto-zona" id="reg-foto-zona">Todavía sin foto</div>
-    <input id="reg-foto-camara" type="file" accept="image/*" capture="environment" hidden>
-    <input id="reg-foto-galeria" type="file" accept="image/*" hidden>
-    <div class="hoja-acciones">
-      <button id="reg-camara" class="btn btn-rojo btn-grande">Sacar foto</button>
-      <button id="reg-galeria" class="btn btn-borde btn-grande">Elegir de galería</button>
-      <button id="reg-empezar" class="btn btn-primario btn-grande oculta">Empezar entrenamiento</button>
-      <button id="reg-sin-foto" class="btn btn-texto">Empezar sin foto</button>
-    </div>`);
-
-  let fotoLista = null;
-  const zona = $("#reg-foto-zona");
-
-  const tomar = async (input) => {
-    const file = input.files?.[0];
-    if (!file) return;
-    zona.textContent = "Comprimiendo…";
-    try {
-      fotoLista = await comprimirFoto(file);
-      zona.innerHTML = `<img src="${fotoLista}" alt="Foto del gimnasio">`;
-      $("#reg-empezar").classList.remove("oculta");
-      $("#reg-camara").textContent = "Sacar otra";
-      vibrar("confirmar");
-    } catch (_) {
-      zona.textContent = "No se pudo procesar la foto. Probá con la galería.";
-    }
-  };
-  $("#reg-foto-camara").onchange = (e) => tomar(e.target);
-  $("#reg-foto-galeria").onchange = (e) => tomar(e.target);
-  $("#reg-camara").onclick = () => $("#reg-foto-camara").click();
-  $("#reg-galeria").onclick = () => $("#reg-foto-galeria").click();
-  zona.onclick = () => $("#reg-foto-camara").click();
-
-  $("#reg-empezar").onclick = async (ev) => {
-    const ok = await iniciarEntrenamiento({ ...ctx, foto: fotoLista, boton: ev.currentTarget });
-    if (ok) cerrarHoja(true);
-  };
-  $("#reg-sin-foto").onclick = async (ev) => {
-    const ok = await iniciarEntrenamiento({ ...ctx, foto: null, boton: ev.currentTarget });
-    if (ok) {
-      cerrarHoja(true);
-      toast("Sin foto por ahora. La podés agregar después desde el calendario.", "", 6000);
-    }
-  };
 }
 
 /* Sesión abierta de otro día: se retoma o se cierra, no se pierde. */
@@ -2635,9 +2815,11 @@ async function iniciarEntrenamiento({ fecha, rutinaId, esRecuperacion, fechaOrig
   const ok = await guardarDia(fecha, cambios, { queHacia: "el inicio del entrenamiento", boton });
   if (!ok) { S.sesion = null; return false; }
 
+  // La foto no puede frenar el arranque: si falla, se anota y se sigue.
   if (foto) {
-    await escribir("la foto del día",
-      () => setDoc(refs.diaMedia(fecha, "foto"), { data: foto, hora: inicio }));
+    escribir("la foto del día",
+      () => setDoc(refs.diaMedia(fecha, "foto"), { data: foto, hora: inicio }))
+      .then((okFoto) => { if (!okFoto) anotarProblema("la foto del gimnasio no se guardó"); });
   }
 
   guardarSesion();
@@ -2826,7 +3008,103 @@ function renderPasoSesion() {
   else if (paso.t === "movilidad") renderMovilidad(cont);
   else if (paso.t === "bloque") renderBloqueIntervalo(cont, paso);
   else if (paso.t === "parte") renderParteCierre(cont);
+  pintarBarraRutina();
   tickTimers(true);
+}
+
+/* ==========================================================================
+   BARRA DE LA RUTINA — al pie, siempre visible durante la sesión
+   ========================================================================== */
+function estadoDelPaso(s, p) {
+  if (p.t !== "ej") return s.cola.indexOf(p) < s.paso ? "hecho" : "pendiente";
+  const hechas = ((S.dias.get(s.fecha)?.series || {})[p.id] || []).filter((x) => x?.hecha).length;
+  const e = ejercicioPorId(p.id);
+  if (hechas >= (e?.series || 4)) return "hecho";
+  if ((s.salteados || []).includes(p.id)) return "salteado";
+  return "pendiente";
+}
+
+function pintarBarraRutina() {
+  const s = S.sesion;
+  const barra = $("#rutina-barra");
+  if (!barra || !s) return;
+  const puntos = s.cola.map((p, i) => {
+    const est = i === s.paso ? "actual" : estadoDelPaso(s, p);
+    return `<i class="rb-punto rb-${est}"></i>`;
+  }).join("");
+  $("#rb-puntos").innerHTML = puntos;
+  const hechos = s.cola.filter((p, i) => i !== s.paso && estadoDelPaso(s, p) === "hecho").length;
+  $("#rb-texto").textContent = `${dondeVaLaSesion(s)} · ${hechos + 1} de ${s.cola.length}`;
+}
+
+function panelRutinaAbierto() {
+  return !$("#rutina-panel")?.classList.contains("oculta");
+}
+function cerrarPanelRutina() {
+  const p = $("#rutina-panel");
+  if (!p) return;
+  p.classList.remove("visible");
+  setTimeout(() => p.classList.add("oculta"), movReducido() ? 0 : 300);
+}
+
+/* Panel a pantalla completa con la rutina entera: saltar, saltear y retomar. */
+function abrirPanelRutina() {
+  const s = S.sesion;
+  if (!s) return;
+  const panel = $("#rutina-panel");
+  const reg = S.dias.get(s.fecha) || {};
+  const vol = volumenSesion({ ...reg, rutinaId: s.rutinaId });
+  const dur = (Date.now() - s.inicio) / 1000;
+  const faltan = s.cola.filter((p, i) => i !== s.paso && estadoDelPaso(s, p) !== "hecho").length;
+
+  const filas = s.cola.map((p, i) => {
+    const est = i === s.paso ? "actual" : estadoDelPaso(s, p);
+    const e = p.t === "ej" ? ejercicioPorId(p.id) : null;
+    const ss = e ? (reg.series?.[e.id] || []).filter((x) => x?.hecha) : [];
+    const titulo = e ? e.nombre
+      : p.t === "bloque" ? `Bloque ${s.cola.filter((x) => x.t === "bloque").indexOf(p) + 1} · ${p.bloque === "cinta" ? "Cinta" : "Circuito"}`
+      : p.t === "calor" || p.t === "movilidad" ? "Entrada en calor"
+      : p.t === "cinta-cierre" ? "Cinta de cierre" : "Parte de cierre";
+    const dato = e
+      ? (ss.length ? `${ss.length} × ${fmtNumero(ss[ss.length - 1].peso, "carga")} kg` : `${e.series} × ${e.reps}`)
+      : "";
+    return `
+      <button class="rp-fila rp-${est}" data-paso="${i}">
+        ${e ? `<img src="img/ejercicios/${e.img}" alt="">` : `<span class="rp-sin-img"></span>`}
+        <span class="rp-cuerpo">
+          <span class="rp-nombre">${esc(titulo)}</span>
+          <span class="rp-dato">${esc(dato)}</span>
+        </span>
+        <span class="rp-estado">${est === "hecho" ? "✅" : est === "salteado" ? "↩" : est === "actual" ? "●" : ""}</span>
+      </button>`;
+  }).join("");
+
+  panel.innerHTML = `
+    <div class="rp-cabecera">
+      <div class="rp-resumen">
+        <span><b class="num">${fmtDuracion(dur)}</b><small>tiempo</small></span>
+        <span><b class="num">${fmtKg(vol)}</b><small>kg movidos</small></span>
+        <span><b class="num">${faltan}</b><small>faltan</small></span>
+      </div>
+      <button id="rp-cerrar" class="btn btn-borde btn-medio">Cerrar</button>
+    </div>
+    <div class="rp-lista">${filas}</div>`;
+
+  panel.classList.remove("oculta");
+  requestAnimationFrame(() => panel.classList.add("visible"));
+  ponerRedHistorial();
+
+  $("#rp-cerrar").onclick = cerrarPanelRutina;
+  panel.querySelectorAll("[data-paso]").forEach((b) => {
+    b.onclick = () => {
+      // Saltar a cualquier paso: retomar uno salteado o reabrir uno terminado.
+      S.sesion.paso = Number(b.dataset.paso);
+      S.sesion.timer = null;
+      guardarSesion();
+      cerrarPanelRutina();
+      renderPasoSesion();
+    };
+  });
 }
 
 function avanzarPaso() {
@@ -2921,6 +3199,7 @@ function renderEjercicio(cont, id) {
   // El récord ya está calculado al empezar la sesión: mostrarlo es gratis.
   const record = s.prMax?.[id];
   const vaARomper = record != null && s.pesoActual[id] > record;
+  const completo = hechas >= e.series;
 
   cont.innerHTML = `
     <div class="paso-indicador">Ejercicio ${numEj} de ${totalEj}</div>
@@ -2962,24 +3241,34 @@ function renderEjercicio(cont, id) {
         }).join("")}
       </div>
 
+      ${completo ? `
+      <div class="entreno-pie">
+        <button id="btn-ej-sig" class="btn btn-rojo btn-gigante">Siguiente ejercicio</button>
+      </div>`
+      : `
+      <div class="entreno-pie">
+        <button id="btn-marcar" class="btn-completar">
+          <span class="bc-titulo">✓ &nbsp;MARCAR SERIE</span>
+          <span class="bc-dato">Quedan ${e.series - hechas} de ${e.series}</span>
+        </button>
+        <button id="btn-marcar-todas" class="btn-completar btn-completar-borde">
+          <span class="bc-titulo">✓✓ &nbsp;MARCAR LAS ${e.series} COMPLETAS</span>
+        </button>
+        <button id="btn-ej-sig" class="btn btn-rojo btn-grande">Siguiente ejercicio</button>
+      </div>`}
+
+      <div class="paso-indicador">¿Costaron las últimas dos? (opcional)</div>
+      <div class="esfuerzo-botones">
+        ${[["sobrado", "Sobrado"], ["justo", "Justo"], ["roto", "Se rompió"]].map(([v, t]) =>
+          `<button data-esf="${v}" class="btn btn-borde ${reg.esfuerzo?.[id] === v ? "sel" : ""}">${t}</button>`).join("")}
+      </div>
+
       <div class="ej-acciones">
         <button id="btn-nota" class="btn btn-borde">Nota ${notaPersistente ? "✓" : ""}</button>
         <button id="btn-ascenso" class="btn btn-borde ${marcadoAscenso ? "ej-accion-activa" : ""}">
           ${marcadoAscenso ? "Marcado para ascenso" : "Marcar para ascenso"}</button>
         <button id="btn-ocupada" class="btn btn-borde">Máquina ocupada</button>
         ${id.startsWith("prensa") ? `<button id="btn-discos" class="btn btn-borde">Discos</button>` : `<span></span>`}
-      </div>
-
-      ${hechas > 0 ? `
-      <div class="paso-indicador">¿Las últimas 2 repeticiones costaron?</div>
-      <div class="esfuerzo-botones">
-        ${[["sobrado", "Sobrado"], ["justo", "Justo"], ["roto", "Se rompió la técnica"]].map(([v, t]) =>
-          `<button data-esf="${v}" class="btn btn-borde ${reg.esfuerzo?.[id] === v ? "sel" : ""}">${t}</button>`).join("")}
-      </div>
-      ${!reg.esfuerzo?.[id] ? `<button id="btn-esf-saltear" class="btn btn-texto" style="width:100%">Saltear esta pregunta</button>` : ""}` : ""}
-
-      <div class="entreno-pie">
-        <button id="btn-ej-sig" class="btn btn-rojo btn-gigante">Siguiente</button>
       </div>
     </div>`;
 
@@ -3000,45 +3289,90 @@ function renderEjercicio(cont, id) {
   $("#reps-menos").onclick = () => { s.repsActual[id] = Math.max(1, s.repsActual[id] - 1); $("#reps-num").textContent = s.repsActual[id]; guardarSesion(); };
   $("#reps-mas").onclick = () => { s.repsActual[id]++; $("#reps-num").textContent = s.repsActual[id]; guardarSesion(); };
 
+  /* Guarda una lista de series y devuelve una función que restaura la anterior. */
+  const escribirSeries = async (nuevas, boton) => {
+    const antes = JSON.parse(JSON.stringify(series));
+    const ok = await guardarDia(s.fecha,
+      { series: { ...(reg.series || {}), [id]: nuevas.filter(Boolean) } },
+      { queHacia: "la serie", boton });
+    if (!ok) return null;
+    guardarSesion();
+    renderPasoSesion();
+    return async () => {
+      await guardarDia(s.fecha, { series: { ...(reg.series || {}), [id]: antes } },
+        { queHacia: "la serie" });
+      s.prMax = maximosHistoricos();
+      renderPasoSesion();
+    };
+  };
+
+  const celebrarRecord = () => {
+    const marcaPrevia = s.prMax[id];
+    if (!s.esPrueba && marcaPrevia !== undefined && s.pesoActual[id] > marcaPrevia) {
+      s.prMax[id] = s.pesoActual[id];
+      bannerRecord(sargento("record", {
+        ejercicio: e.nombre, peso: fmtNumero(s.pesoActual[id], "carga"),
+      }));
+    } else if (marcaPrevia === undefined) {
+      s.prMax[id] = s.pesoActual[id];
+    }
+  };
+
+  /* Tocar una serie ya marcada la desmarca. */
   cont.querySelectorAll("[data-serie]").forEach((b) => {
     b.onclick = async () => {
       const i = Number(b.dataset.serie);
+      if (!series[i]?.hecha) { marcarUnaSerie(b); return; }
       const nuevas = [...series];
-      if (nuevas[i]?.hecha) {
-        nuevas[i] = null;
-      } else {
-        nuevas[i] = { peso: s.pesoActual[id], reps: s.repsActual[id], hecha: true };
-        ponerDescanso();
-        const esUltima = nuevas.filter((x) => x?.hecha).length >= e.series;
-        vibrar(esUltima ? "confirmar" : "leve");
-        // ¿récord? (solo si ya había una marca previa, y nunca en modo prueba)
-        const marcaPrevia = s.prMax[id];
-        if (!s.esPrueba && marcaPrevia !== undefined && s.pesoActual[id] > marcaPrevia) {
-          s.prMax[id] = s.pesoActual[id];
-          bannerRecord(sargento("record", {
-            ejercicio: e.nombre, peso: fmtNumero(s.pesoActual[id], "carga"),
-          }));
-        } else if (marcaPrevia === undefined) {
-          s.prMax[id] = s.pesoActual[id];
-        }
-      }
-      const limpias = nuevas.filter(Boolean);
-      await guardarDia(s.fecha, { series: { ...(reg.series || {}), [id]: limpias } });
-      guardarSesion();
-      renderPasoSesion();
+      nuevas[i] = null;
+      vibrar("leve");
+      await escribirSeries(nuevas, b);
     };
   });
 
+  /* Marcar una serie: valida el peso, marca, arranca el descanso y ofrece deshacer. */
+  async function marcarUnaSerie(boton) {
+    if (!await pesoRazonable(id, e, s.pesoActual[id], s.repsActual[id])) return;
+    const nuevas = [...series];
+    const libre = nuevas.findIndex((x) => !x?.hecha);
+    const i = libre === -1 ? nuevas.length : libre;
+    nuevas[i] = { peso: s.pesoActual[id], reps: s.repsActual[id], hecha: true };
+    const esUltima = nuevas.filter((x) => x?.hecha).length >= e.series;
+    vibrar(esUltima ? "confirmar" : "leve");
+    celebrarRecord();
+    ponerDescanso();
+    const revertir = await escribirSeries(nuevas, boton);
+    if (revertir) ofrecerDeshacer(`Serie ${i + 1} marcada`, async () => {
+      cancelarCampana("descanso");
+      s.descanso = null;
+      await revertir();
+    });
+  }
+
+  const bMarcar = $("#btn-marcar");
+  if (bMarcar) bMarcar.onclick = () => marcarUnaSerie(bMarcar);
+
+  /* Marcar todas de una: para cuando terminé y me olvidé de ir marcando. */
+  const bTodas = $("#btn-marcar-todas");
+  if (bTodas) bTodas.onclick = async () => {
+    if (!await pesoRazonable(id, e, s.pesoActual[id], s.repsActual[id])) return;
+    const nuevas = Array.from({ length: e.series }, (_, i) => series[i]?.hecha ? series[i]
+      : { peso: s.pesoActual[id], reps: s.repsActual[id], hecha: true });
+    vibrar("confirmar");
+    celebrarRecord();
+    const revertir = await escribirSeries(nuevas, bTodas);
+    if (revertir) ofrecerDeshacer(`${e.nombre}: ${e.series} series marcadas`, revertir);
+  };
+
   cont.querySelectorAll("[data-esf]").forEach((b) => {
     b.onclick = async () => {
-      await guardarDia(s.fecha, { esfuerzo: { ...(reg.esfuerzo || {}), [id]: b.dataset.esf } });
+      // Volver a tocar el mismo lo desmarca: es opcional de verdad.
+      const nuevo = reg.esfuerzo?.[id] === b.dataset.esf ? null : b.dataset.esf;
+      await guardarDia(s.fecha, { esfuerzo: { ...(reg.esfuerzo || {}), [id]: nuevo } });
       vibrar("leve");
       renderPasoSesion();
     };
   });
-  const esfSaltear = $("#btn-esf-saltear");
-  if (esfSaltear) esfSaltear.onclick = () => avanzarPaso();
-
   $("#btn-nota").onclick = () => hojaNotaEjercicio(id, e.nombre);
   $("#btn-ascenso").onclick = async () => {
     let asc = [...(S.config.ascensos || [])];
@@ -3049,28 +3383,64 @@ function renderEjercicio(cont, id) {
     await guardarDia(s.fecha, { ascensoMarcado: diaAsc });
     renderPasoSesion();
   };
-  $("#btn-ocupada").onclick = () => {
-    const cola = s.cola;
-    const actual = cola[s.paso];
-    cola.splice(s.paso, 1);
-    let pos = cola.findIndex((p) => p.t === "cinta-cierre");
-    if (pos < 0) pos = cola.length - 1;
-    cola.splice(pos, 0, actual);
-    s.timer = null; s.descanso = null;
-    guardarSesion();
-    toast("Salteado. Vuelve al final.");
-    renderPasoSesion();
-  };
+  $("#btn-ocupada").onclick = () => saltearEjercicio();
   const discos = $("#btn-discos");
-  if (discos) discos.onclick = () => hojaDiscos(Number(inputPeso.value) || 0);
+  if (discos) discos.onclick = () => hojaDiscos(leerNumero(inputPeso, "carga") || 0);
 
-  $("#btn-ej-sig").onclick = () => {
-    if (hechas > 0 && !reg.esfuerzo?.[id]) {
-      toast('Marcá cómo terminaste, o tocá "Saltear esta pregunta".', "toast-alerta");
-      return;
-    }
-    avanzarPaso();
-  };
+  // El esfuerzo dejó de bloquear: "Siguiente" avanza siempre.
+  $("#btn-ej-sig").onclick = () => avanzarPaso();
+}
+
+/* Saltear manda el ejercicio al final de la cola, nunca lo pierde. */
+function saltearEjercicio() {
+  const s = S.sesion;
+  const cola = s.cola;
+  const actual = cola[s.paso];
+  if (!actual || actual.t !== "ej") return;
+  const posOriginal = s.paso;
+  cola.splice(s.paso, 1);
+  let pos = cola.findIndex((p) => p.t === "cinta-cierre");
+  if (pos < 0) pos = cola.length;
+  cola.splice(pos, 0, actual);
+  s.timer = null; s.descanso = null;
+  s.salteados = [...new Set([...(s.salteados || []), actual.id])];
+  guardarSesion();
+  renderPasoSesion();
+  ofrecerDeshacer(`${nombreEjercicio(actual.id)} salteado`, () => {
+    const i = cola.findIndex((p) => p.t === "ej" && p.id === actual.id);
+    if (i >= 0) cola.splice(i, 1);
+    cola.splice(posOriginal, 0, actual);
+    s.paso = posOriginal;
+    s.salteados = (s.salteados || []).filter((x) => x !== actual.id);
+    guardarSesion();
+    renderPasoSesion();
+  });
+}
+
+/* ==========================================================================
+   PESOS MAL TIPEADOS — el error que más ensucia récords, volumen y gráficos
+   ========================================================================== */
+function pesoRazonable(id, e, peso, reps) {
+  return new Promise((resolver) => {
+    const previa = laVezPasada(id);
+    const raroPeso = previa && previa.peso > 0 && peso > 0 &&
+      (peso > previa.peso * 2 || peso < previa.peso / 2);
+    const raroReps = reps > e.reps * 2;
+    if (!raroPeso && !raroReps) return resolver(true);
+
+    const motivo = raroPeso
+      ? `¿${fmtNumero(peso, "carga")} kg? La vez pasada fueron ${fmtNumero(previa.peso, "carga")}.`
+      : `¿${reps} repeticiones? La rutina dice ${e.reps}.`;
+    abrirHoja(`
+      <h3>Revisá el número</h3>
+      <p class="texto-2">${esc(motivo)} ¿Está bien?</p>
+      <div class="hoja-acciones">
+        <button id="pr-si" class="btn btn-primario btn-grande">Sí, está bien</button>
+        <button id="pr-no" class="btn btn-borde btn-grande">Corregir</button>
+      </div>`, { onCerrar: () => resolver(false) });
+    $("#pr-si").onclick = () => { cerrarHoja(true); resolver(true); };
+    $("#pr-no").onclick = () => { cerrarHoja(true); resolver(false); };
+  });
 }
 
 function hojaNotaEjercicio(id, nombre) {
@@ -3192,7 +3562,8 @@ function renderBloqueIntervalo(cont, paso) {
       </div>
       <div class="vueltas-etiqueta">Vueltas de este bloque</div>
       <div class="vueltas-contador">
-        <button class="btn-paso" id="v-menos" aria-label="Restar media vuelta">−</button>
+        <button class="btn-paso" id="v-menos1" aria-label="Restar una vuelta">−1</button>
+        <button class="btn-paso" id="v-menos" aria-label="Restar media vuelta">−½</button>
         <span class="vueltas-num" id="vueltas-num" data-valor="${s.vueltas[v] || 0}">${s.vueltas[v] || 0}</span>
         <button class="btn-paso" id="v-media" aria-label="Sumar media vuelta">+½</button>
         <button class="btn-paso" id="v-mas" aria-label="Sumar una vuelta">+1</button>
@@ -3220,6 +3591,7 @@ function renderBloqueIntervalo(cont, paso) {
       const num = $("#vueltas-num");
       if (num) { num.textContent = s.vueltas[v]; num.dataset.valor = String(s.vueltas[v]); }
     };
+    $("#v-menos1").onclick = () => cambiarV(-1);
     $("#v-menos").onclick = () => cambiarV(-0.5);
     $("#v-media").onclick = () => cambiarV(0.5);
     $("#v-mas").onclick = () => cambiarV(1);
@@ -3227,7 +3599,18 @@ function renderBloqueIntervalo(cont, paso) {
   const ir = $("#btn-bloque-ir");
   if (ir) ir.onclick = () => ponerTimer(bloqueDef.duracionSeg, bloqueDef.nombre);
   const sig = $("#btn-bloque-sig");
-  if (sig) sig.onclick = () => avanzarPaso();
+  if (sig) sig.onclick = () => {
+    const pasoPrevio = s.paso;
+    const timerPrevio = s.timer ? { ...s.timer } : null;
+    avanzarPaso();
+    ofrecerDeshacer(`Bloque ${numBloque} terminado`, () => {
+      s.paso = pasoPrevio;
+      s.timer = timerPrevio;
+      if (timerPrevio && !timerPrevio.sono) reagendarTemporizadores();
+      guardarSesion();
+      renderPasoSesion();
+    });
+  };
 }
 
 /* --- Parte de cierre --- */
@@ -3293,6 +3676,7 @@ function renderParteCierre(cont) {
   /* El día YA está registrado desde que empezó. Terminar solo cierra la sesión
      y guarda el parte: nunca decide si el día cuenta o no. */
   $("#btn-terminar").onclick = async (ev) => {
+    const sesionPrevia = JSON.parse(JSON.stringify(s));
     const ok = await guardarDia(s.fecha, {
       fin: Date.now(),
       comentario: $("#cierre-comentario").value.trim(),
@@ -3301,12 +3685,29 @@ function renderParteCierre(cont) {
     }, { queHacia: "el cierre del entrenamiento", boton: ev.currentTarget });
     if (!ok) return;
     const datos = { vol, dur: durSeg, comparacion, esPrueba: s.esPrueba };
+    const fecha = s.fecha;
     S.sesion = null;
     limpiarSesionLocal();
     soltarWakeLock();
     frenarTickeo();
     clearTimeout(cierreAutoTimer);
-    momentoCierre({ ...datos, alCerrar: () => irA("inicio", true) });
+    momentoCierre({
+      ...datos,
+      alCerrar: () => {
+        irA("inicio", true);
+        ofrecerDeshacer("Sesión cerrada", async () => {
+          await guardarDia(fecha, { fin: null, sesion: sesionParaGuardar(sesionPrevia) },
+            { queHacia: "la reapertura" });
+          S.sesion = sesionPrevia;
+          S.sesion.cola = armarCola(sesionPrevia.rutinaId);
+          S.sesion.prMax = maximosHistoricos();
+          reagendarTemporizadores();
+          pedirWakeLock();
+          arrancarTickeo();
+          irA("entreno");
+        });
+      },
+    });
   };
 }
 
@@ -3542,6 +3943,7 @@ function hojaDetalleDia(fecha) {
 
   const acciones = [];
   if (abierta) acciones.push(`<button id="dd-retomar" class="btn btn-rojo btn-grande">Retomar el entrenamiento</button>`);
+  else if (registrado && reg?.rutinaId) acciones.push(`<button id="dd-reabrir" class="btn btn-borde btn-grande">Reabrir y seguir cargando series</button>`);
   if (registrado) acciones.push(`<button id="dd-ficha" class="btn btn-borde btn-grande">Ver la ficha completa</button>`);
   if (registrado && reg?.rutinaId) acciones.push(`<button id="dd-series" class="btn btn-borde btn-grande">Corregir pesos y repeticiones</button>`);
   if (faltaFoto) acciones.push(`<button id="dd-foto" class="btn btn-borde btn-grande">Agregar la foto</button>`);
@@ -3561,6 +3963,25 @@ function hojaDetalleDia(fecha) {
 
   const on = (id, fn) => { const b = $(`#${id}`); if (b) b.onclick = fn; };
   on("dd-retomar", () => { cerrarHoja(true); retomarSesion(fecha); });
+  /* Una sesión ya cerrada se reabre: se le vuelven a cargar series y se cierra
+     de nuevo con "Terminar". El día sigue contando igual mientras tanto. */
+  on("dd-reabrir", async (ev) => {
+    const ok = await guardarDia(fecha, {
+      fin: null,
+      sesion: {
+        abierta: true, rutinaId: reg.rutinaId, fecha,
+        esRecuperacion: reg.estado === "recuperada", fechaOriginal: reg.recuperaDe || null,
+        esPrueba: !!reg.esPrueba, inicio: reg.inicio || Date.now(), paso: 0,
+        calorHecho: {}, pesoActual: {}, repsActual: {},
+        timer: null, descanso: null, tocada: Date.now(),
+        hechoEl: hoyISO(),
+      },
+      cerradaAutomatica: false,
+    }, { queHacia: "la reapertura", boton: ev.currentTarget });
+    if (!ok) return;
+    cerrarHoja(true);
+    retomarSesion(fecha);
+  });
   on("dd-ficha", () => { cerrarHoja(true); abrirFicha(fecha); });
   on("dd-series", () => hojaEditarSeries(fecha));
   on("dd-foto", () => hojaAgregarFoto(fecha));
@@ -3960,16 +4381,8 @@ function indicadoresDiaHTML(fecha) {
 }
 
 /* ==========================================================================
-   PROGRESO — Peso + Historial
+   PROGRESO — dos secciones independientes, cada una con su lugar en la barra
    ========================================================================== */
-function renderProgreso() {
-  const seg = localStorage.getItem("progresoSeg") || "entreno";
-  $$("#progreso-segmentos button").forEach((b) => b.classList.toggle("sel", b.dataset.seg === seg));
-  $("#progreso-peso").classList.toggle("oculta", seg !== "peso");
-  $("#progreso-entreno").classList.toggle("oculta", seg !== "entreno");
-  if (seg === "peso") renderPeso();
-  else renderHistorial();
-}
 
 function pesajesOrdenados() {
   return [...S.pesajes.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))
@@ -4680,6 +5093,7 @@ function renderAjustes() {
 $("#btn-login").addEventListener("click", entrar);
 $("#btn-entreno-salir").addEventListener("click", salirDeSesion);
 $("#btn-ajustes").addEventListener("click", () => irA("ajustes"));
+$("#rutina-barra").addEventListener("click", abrirPanelRutina);
 $("#bd-menos").addEventListener("click", () => ajustarDescanso(-15));
 $("#bd-mas").addEventListener("click", () => ajustarDescanso(15));
 $("#bd-reiniciar").addEventListener("click", reiniciarDescanso);
@@ -4690,12 +5104,6 @@ $("#bd-saltar").addEventListener("click", () => {
 });
 $("#tab-mas").addEventListener("click", () => { vibrar("leve"); hojaMas(); });
 $$(".tab").forEach((t) => t.addEventListener("click", () => irA(t.dataset.tab)));
-$$("#progreso-segmentos button").forEach((b) => {
-  b.addEventListener("click", () => {
-    localStorage.setItem("progresoSeg", b.dataset.seg);
-    renderProgreso();
-  });
-});
 $("#cal-prev").addEventListener("click", () => {
   const b = parseISO(S.calMes); S.calMes = fmtISO(new Date(b.getFullYear(), b.getMonth() - 1, 1));
   renderCalendario();

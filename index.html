@@ -18,6 +18,16 @@
 </head>
 <body>
 
+<!-- Banner de sesión en curso: rojo lleno, no se puede cerrar -->
+<button id="barra-sesion" class="barra-sesion oculta">
+  <span class="bs-punto">🔴</span>
+  <span class="bs-texto">
+    <span class="bs-titulo" id="bs-titulo">ESTÁS ENTRENANDO</span>
+    <span class="bs-detalle" id="bs-detalle"></span>
+  </span>
+  <span class="bs-flecha">→</span>
+</button>
+
 <div id="lienzo">
 
   <!-- ============ LOGIN ============ -->
@@ -93,16 +103,18 @@
     </div>
   </section>
 
-  <!-- ============ PROGRESO ============ -->
+  <!-- ============ PROGRESO DEL ENTRENAMIENTO ============ -->
   <section id="vista-progreso" class="vista oculta">
     <div class="etiqueta">Progreso</div>
-    <h1 class="titular titular-seccion">Cómo venís</h1>
-    <div class="segmentos segmentos-anchos" id="progreso-segmentos">
-      <button data-seg="entreno" class="sel">Entrenamiento</button>
-      <button data-seg="peso">Peso corporal</button>
-    </div>
+    <h1 class="titular titular-seccion">Tu entrenamiento</h1>
     <div id="progreso-entreno"></div>
-    <div id="progreso-peso" class="oculta"></div>
+  </section>
+
+  <!-- ============ PROGRESO DEL PESO ============ -->
+  <section id="vista-peso" class="vista oculta">
+    <div class="etiqueta">Progreso</div>
+    <h1 class="titular titular-seccion">Tu peso</h1>
+    <div id="progreso-peso"></div>
   </section>
 
   <!-- ============ AJUSTES ============ -->
@@ -120,6 +132,11 @@
       <span id="entreno-reloj" class="entreno-reloj"></span>
     </header>
     <div id="entreno-contenido" class="entreno-contenido"></div>
+    <button id="rutina-barra" class="rutina-barra">
+      <span class="rb-puntos" id="rb-puntos"></span>
+      <span class="rb-texto" id="rb-texto"></span>
+      <span class="rb-flecha">▲</span>
+    </button>
   </section>
 
   <!-- ============ BARRA INFERIOR ============ -->
@@ -133,8 +150,11 @@
     <button id="tab-mas" class="tab-mas" aria-label="Registrar">
       <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
     </button>
-    <button data-tab="progreso" class="tab" aria-label="Progreso">
+    <button data-tab="progreso" class="tab" aria-label="Progreso del entrenamiento">
       <svg viewBox="0 0 24 24"><path d="M4 20V10m5.5 10V4M15 20v-7m5 7V8"/></svg>
+    </button>
+    <button data-tab="peso" class="tab" aria-label="Progreso del peso">
+      <svg viewBox="0 0 24 24"><path d="M12 4.5a7.5 7.5 0 0 1 7.5 7.5v6a1.5 1.5 0 0 1-1.5 1.5H6a1.5 1.5 0 0 1-1.5-1.5v-6A7.5 7.5 0 0 1 12 4.5z"/><path d="M12 12 9.5 8.8"/></svg>
     </button>
   </nav>
 
@@ -144,6 +164,7 @@
 <div id="velo" class="velo oculta"></div>
 <div id="hoja" class="hoja oculta">
   <div class="hoja-tirador" id="hoja-tirador"></div>
+  <button id="hoja-cerrar" class="hoja-cerrar" aria-label="Cerrar">✕</button>
   <div id="hoja-contenido"></div>
 </div>
 <div id="banner" class="banner oculta"></div>
@@ -169,6 +190,8 @@
     <button id="bd-saltar" class="bd-btn bd-saltar">Saltar</button>
   </div>
 </div>
+<div id="deshacer" class="deshacer oculta" aria-live="polite"></div>
+<div id="rutina-panel" class="rutina-panel oculta"></div>
 <div id="sync-indicador" class="sync-indicador oculta" aria-live="polite">Guardando…</div>
 <div id="fallo-escritura" class="fallo-escritura oculta"></div>
 <div id="momento" class="momento oculta"></div>
