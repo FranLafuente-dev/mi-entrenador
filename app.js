@@ -935,6 +935,7 @@ function mostrarVista(nombre) {
   for (const v of VISTAS) $(`#vista-${v}`)?.classList.toggle("oculta", v !== nombre);
   actualizarTabbar();
   refrescarVistaActual();
+  pintarBarraDescanso();     // el descanso sigue a la vista, no al revés
   window.scrollTo(0, 0);
 }
 
@@ -1701,22 +1702,115 @@ function hojaCausaMayor(fecha, hayEscudo) {
 }
 
 /* ==========================================================================
-   AUDIO — campana (se desbloquea con el primer gesto)
+   AUDIO — la campana tiene que sonar con la pantalla apagada
+   --------------------------------------------------------------------------
+   Un setTimeout no sirve: cuando la app pasa a segundo plano, iOS congela los
+   temporizadores de JavaScript. Lo que sí sobrevive es el reloj del hilo de
+   audio. Así que la campana no se "dispara cuando toca": se AGENDA en tiempo
+   absoluto sobre el AudioContext apenas arranca el descanso.
+
+   Para que ese reloj no se detenga, el contexto tiene que seguir activo, y iOS
+   solo lo mantiene vivo si hay audio realmente sonando. De ahí el bucle de
+   ruido inaudible (no silencio digital: el silencio absoluto lo ignora) que
+   corre únicamente mientras hay un temporizador pendiente.
+
+   `audioSession.type = "transient"` hace que la campana BAJE la música en vez
+   de cortarla. Ojo con el compromiso: el tipo que mejor sobrevive al segundo
+   plano es "playback", pero ese se apropia de la sesión y te para la música.
+   Está en una constante para poder cambiarlo de un lado.
    ========================================================================== */
-const campana = new Audio("campana.mp3");
+const TIPO_SESION_AUDIO = "transient";   // "playback" si la campana no suena bloqueada
+
+const AUDIO = { ctx: null, buffer: null, vivo: null, agendadas: new Map() };
+const campana = new Audio("campana.mp3");   // respaldo para primer plano
 campana.preload = "auto";
 
+async function prepararAudio() {
+  if (AUDIO.ctx) {
+    if (AUDIO.ctx.state === "suspended") await AUDIO.ctx.resume().catch(() => { });
+    return AUDIO.ctx;
+  }
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return null;
+  try {
+    AUDIO.ctx = new Ctx();
+    if (navigator.audioSession) navigator.audioSession.type = TIPO_SESION_AUDIO;
+    await AUDIO.ctx.resume().catch(() => { });
+    const res = await fetch("campana.mp3");
+    AUDIO.buffer = await AUDIO.ctx.decodeAudioData(await res.arrayBuffer());
+  } catch (e) {
+    console.warn("audio:", e);
+  }
+  return AUDIO.ctx;
+}
+
+/* Se llama desde un gesto del usuario: es la única forma de habilitar audio. */
 function desbloquearAudio() {
+  prepararAudio().then(() => { S.audioListo = !!AUDIO.buffer; });
   if (S.audioListo) return;
   campana.muted = true;
   const p = campana.play();
   if (p) p.then(() => {
     campana.pause(); campana.currentTime = 0; campana.muted = false;
-    S.audioListo = true;
   }).catch(() => { campana.muted = false; });
 }
+
+/* Mantiene vivo el reloj de audio mientras haya algo agendado. */
+function mantenerAudioVivo(encender) {
+  const ctx = AUDIO.ctx;
+  if (!ctx) return;
+  if (encender && !AUDIO.vivo) {
+    const buf = ctx.createBuffer(1, Math.round(ctx.sampleRate * 2), ctx.sampleRate);
+    const datos = buf.getChannelData(0);
+    for (let i = 0; i < datos.length; i++) datos[i] = (Math.random() * 2 - 1) * 1e-4;
+    const src = ctx.createBufferSource();
+    src.buffer = buf; src.loop = true;
+    const g = ctx.createGain();
+    g.gain.value = 0.0015;                 // inaudible, pero no cero
+    src.connect(g).connect(ctx.destination);
+    try { src.start(); } catch (_) { return; }
+    AUDIO.vivo = src;
+  } else if (!encender && AUDIO.vivo) {
+    try { AUDIO.vivo.stop(); } catch (_) { }
+    AUDIO.vivo = null;
+  }
+}
+
+/* Agenda la campana para un instante absoluto (Date.now en ms). */
+function agendarCampana(clave, instanteMs) {
+  cancelarCampana(clave);
+  const ctx = AUDIO.ctx;
+  if (!ctx || !AUDIO.buffer) return false;
+  if (ctx.state === "suspended") ctx.resume().catch(() => { });
+  const faltanSeg = (instanteMs - Date.now()) / 1000;
+  if (faltanSeg < 0) return false;
+  const src = ctx.createBufferSource();
+  src.buffer = AUDIO.buffer;
+  src.connect(ctx.destination);
+  try { src.start(ctx.currentTime + faltanSeg); } catch (_) { return false; }
+  AUDIO.agendadas.set(clave, src);
+  mantenerAudioVivo(true);
+  return true;
+}
+
+function cancelarCampana(clave) {
+  const src = AUDIO.agendadas.get(clave);
+  if (src) { try { src.stop(); } catch (_) { } AUDIO.agendadas.delete(clave); }
+  // Sin nada agendado no hace falta seguir sosteniendo el contexto de audio.
+  if (AUDIO.agendadas.size === 0) mantenerAudioVivo(false);
+}
+
+/* Toque inmediato (botón "Probar campana" y respaldo en primer plano). */
 function sonarCampana() {
-  try { campana.currentTime = 0; campana.play().catch(() => { }); } catch (_) { }
+  const ctx = AUDIO.ctx;
+  if (ctx && AUDIO.buffer && ctx.state === "running") {
+    const src = ctx.createBufferSource();
+    src.buffer = AUDIO.buffer;
+    src.connect(ctx.destination);
+    try { src.start(); } catch (_) { }
+  } else {
+    try { campana.currentTime = 0; campana.play().catch(() => { }); } catch (_) { }
+  }
   vibrar("confirmar");
 }
 
@@ -1734,6 +1828,8 @@ function soltarWakeLock() {
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
     if (S.sesion) pedirWakeLock();
+    // iOS suspende el contexto al volver del segundo plano más de la cuenta.
+    if (AUDIO.ctx?.state === "suspended") AUDIO.ctx.resume().catch(() => { });
     tickTimers(true);
     if (S.cargado && vistaActual === "inicio") renderInicio();
   }
@@ -1752,16 +1848,20 @@ function frenarTickeo() { clearInterval(timerInterval); timerInterval = null; }
 
 function tickTimers(alVolver) {
   const s = S.sesion;
-  if (!s) { frenarTickeo(); return; }
+  if (!s) { frenarTickeo(); pintarBarraDescanso(); return; }
   const ahora = Date.now();
 
   for (const clave of ["timer", "descanso"]) {
     const t = s[clave];
     if (!t) continue;
     const resta = (t.fin - ahora) / 1000;
+    // La campana ya quedó agendada en el hilo de audio al arrancar el timer.
+    // Este toque es el respaldo para cuando ese agendado no se pudo hacer.
     if (resta <= 0 && !t.sono) {
       t.sono = true;
-      sonarCampana();
+      if (!t.agendada) sonarCampana();
+      else vibrar("confirmar");
+      cancelarCampana(clave);
       guardarSesion();
     }
     const nodo = $(`#t-${clave}`);
@@ -1777,18 +1877,81 @@ function tickTimers(alVolver) {
   }
   const reloj = $("#entreno-reloj");
   if (reloj && s.inicio) reloj.textContent = fmtCrono((ahora - s.inicio) / 1000);
+  pintarBarraDescanso();
 }
 
 function ponerTimer(seg, etiqueta) {
   const dur = durT(seg);
-  S.sesion.timer = { fin: Date.now() + dur * 1000, dur, etiqueta, sono: false };
+  const fin = Date.now() + dur * 1000;
+  S.sesion.timer = { fin, dur, etiqueta, sono: false, agendada: agendarCampana("timer", fin) };
   guardarSesion();
+  arrancarTickeo();
   renderPasoSesion();
 }
-function ponerDescanso() {
-  const dur = durT(S.config.descansoSeg || 90);
-  S.sesion.descanso = { fin: Date.now() + dur * 1000, dur, sono: false };
+
+function ponerDescanso(segundos) {
+  const dur = segundos ?? durT(S.config.descansoSeg || 90);
+  const fin = Date.now() + dur * 1000;
+  S.sesion.descanso = { fin, dur, sono: false, agendada: agendarCampana("descanso", fin) };
   guardarSesion();
+  arrancarTickeo();
+  pintarBarraDescanso();
+}
+
+/* Corre el final del descanso sin perder el agendado de la campana. */
+function ajustarDescanso(deltaSeg) {
+  const d = S.sesion?.descanso;
+  if (!d) return;
+  const restaba = Math.max(0, (d.fin - Date.now()) / 1000);
+  const nueva = Math.max(1, restaba + deltaSeg);
+  d.fin = Date.now() + nueva * 1000;
+  d.dur = Math.max(d.dur, nueva);
+  d.sono = false;
+  d.agendada = agendarCampana("descanso", d.fin);
+  vibrar("leve");
+  guardarSesion();
+  pintarBarraDescanso();
+  renderPasoSesion();
+}
+
+function reiniciarDescanso() {
+  cancelarCampana("descanso");
+  ponerDescanso();
+  vibrar("leve");
+  renderPasoSesion();
+}
+
+function saltarDescanso() {
+  cancelarCampana("descanso");
+  if (S.sesion) S.sesion.descanso = null;
+  vibrar("leve");
+  guardarSesion();
+  pintarBarraDescanso();
+  renderPasoSesion();
+}
+
+/* ==========================================================================
+   BARRA FLOTANTE DE DESCANSO — visible en cualquier pantalla mientras corre
+   ========================================================================== */
+function pintarBarraDescanso() {
+  const barra = $("#barra-descanso");
+  if (!barra) return;
+  const s = S.sesion;
+  // En la pantalla de entrenamiento el temporizador de bloque ya tiene su
+  // anillo grande; la barra flotante es para el descanso entre series.
+  const t = s?.descanso || (vistaActual !== "entreno" ? s?.timer : null);
+  if (!t) { barra.classList.add("oculta"); return; }
+
+  const resta = (t.fin - Date.now()) / 1000;
+  const esDescanso = t === s.descanso;
+  barra.classList.remove("oculta");
+  barra.classList.toggle("fin", resta <= 0);
+  barra.classList.toggle("late", resta > 0 && resta <= 3);
+  barra.classList.toggle("bd-bloque", !esDescanso);
+  $("#bd-num").textContent = fmtCrono(resta);
+  $("#bd-etiqueta").textContent = resta <= 0
+    ? "¡Dale!" : (esDescanso ? "Descanso" : (t.etiqueta || "En curso"));
+  $("#bd-ajustes")?.classList.toggle("oculta", !esDescanso);
 }
 
 /* ==========================================================================
@@ -2325,7 +2488,6 @@ function renderEjercicio(cont, id) {
   if (previa?.esfuerzo === "sobrado") sugerencia = "La vez pasada quedaste sobrado acá. Si querés subir, el número lo ponés vos.";
   if (marcadoAscenso) sugerencia = "Marcaste esta máquina para ascenso. Vos decidís el peso.";
 
-  const d = s.descanso;
   cont.innerHTML = `
     <div class="paso-indicador">Ejercicio ${numEj} de ${totalEj}</div>
     <div class="ej-tarjeta">
@@ -2358,12 +2520,6 @@ function renderEjercicio(cont, id) {
           </button>`;
         }).join("")}
       </div>
-
-      ${d ? `<div class="timer-descanso-mini" id="t-descanso">
-        <span class="t-num num">${fmtCrono((d.fin - Date.now()) / 1000)}</span>
-        <span class="texto-2" style="font-size:13px">descanso</span>
-        <button id="descanso-saltar" class="btn btn-suave btn-medio">Saltar</button>
-      </div>` : ""}
 
       <div class="ej-acciones">
         <button id="btn-nota" class="btn btn-borde">Nota ${notaPersistente ? "✓" : ""}</button>
@@ -2426,9 +2582,6 @@ function renderEjercicio(cont, id) {
       renderPasoSesion();
     };
   });
-
-  const saltar = $("#descanso-saltar");
-  if (saltar) saltar.onclick = () => { s.descanso = null; guardarSesion(); renderPasoSesion(); };
 
   cont.querySelectorAll("[data-esf]").forEach((b) => {
     b.onclick = async () => {
@@ -3869,8 +4022,11 @@ function renderAjustes() {
       <span class="interruptor"><input id="cfg-prueba" type="checkbox" ${modoPrueba() ? "checked" : ""}><i></i></span></div>
     <div class="hoja-acciones" style="margin-top:8px">
       <button id="cfg-campana" class="btn btn-borde btn-grande">Probar campana</button>
+      <button id="cfg-campana-bloqueo" class="btn btn-borde btn-grande">Probar campana con pantalla apagada</button>
       <button id="cfg-imagenes" class="btn btn-borde btn-grande">Ver imágenes de ejercicios</button>
     </div>
+    <p class="dato">La segunda agenda la campana a 15 segundos: tocala, bloqueá el
+    teléfono y esperá. Es la única forma de comprobar si suena en segundo plano.</p>
     <div id="cfg-grilla-imgs" class="oculta"></div>
 
     <div class="seccion-titulo">Cuenta</div>
@@ -3905,6 +4061,23 @@ function renderAjustes() {
       : "Modo prueba desactivado.");
   };
   $("#cfg-campana").onclick = () => { desbloquearAudio(); setTimeout(sonarCampana, 150); };
+  $("#cfg-campana-bloqueo").onclick = async (ev) => {
+    ev.currentTarget.disabled = true;
+    desbloquearAudio();
+    await prepararAudio();
+    const ok = agendarCampana("prueba", Date.now() + 15000);
+    if (!ok) {
+      toast("No se pudo agendar la campana en este dispositivo.", "toast-alerta", 7000);
+      ev.currentTarget.disabled = false;
+      return;
+    }
+    toast("Agendada. Bloqueá el teléfono ahora y esperá 15 segundos.", "", 8000);
+    setTimeout(() => {
+      cancelarCampana("prueba");
+      const b = $("#cfg-campana-bloqueo");
+      if (b) b.disabled = false;
+    }, 17000);
+  };
   $("#cfg-imagenes").onclick = () => {
     const g = $("#cfg-grilla-imgs");
     if (!g.classList.contains("oculta")) { g.classList.add("oculta"); return; }
@@ -3948,6 +4121,14 @@ function renderAjustes() {
    ========================================================================== */
 $("#btn-login").addEventListener("click", entrar);
 $("#btn-entreno-salir").addEventListener("click", salirDeSesion);
+$("#bd-menos").addEventListener("click", () => ajustarDescanso(-15));
+$("#bd-mas").addEventListener("click", () => ajustarDescanso(15));
+$("#bd-reiniciar").addEventListener("click", reiniciarDescanso);
+$("#bd-saltar").addEventListener("click", () => {
+  // En un temporizador de bloque, "Saltar" corta ese bloque, no el descanso.
+  if (S.sesion?.descanso) saltarDescanso();
+  else if (S.sesion?.timer) { cancelarCampana("timer"); S.sesion.timer = null; guardarSesion(); renderPasoSesion(); pintarBarraDescanso(); }
+});
 $("#tab-mas").addEventListener("click", () => { vibrar("leve"); hojaMas(); });
 $$(".tab").forEach((t) => t.addEventListener("click", () => irA(t.dataset.tab)));
 $$("#progreso-segmentos button").forEach((b) => {

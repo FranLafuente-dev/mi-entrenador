@@ -485,14 +485,6 @@ img { max-width: 100%; display: block; }
 .temporizador.late .timer-anillo { animation: timer-late 1s ease infinite; }
 @keyframes timer-late { 50% { transform: scale(1.03); } }
 
-.timer-descanso-mini {
-  display: flex; align-items: center; justify-content: center; gap: 12px;
-  background: #1C1C1E; border-radius: var(--r-boton);
-  padding: 12px; margin: 12px 0; font-weight: 700; font-size: 22px;
-  font-variant-numeric: tabular-nums;
-}
-.timer-descanso-mini .btn-medio { min-height: 44px; }
-
 /* Acciones por ejercicio */
 .ej-acciones { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0; }
 .ej-acciones .btn { min-height: 52px; font-size: 14px; }
@@ -748,6 +740,53 @@ canvas.grafico-mini { width: 100%; height: 130px; background: var(--superficie);
   padding: 16px; font-size: 16px; line-height: 1.6; margin-top: 12px; text-align: center;
 }
 .discos-resultado strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+
+/* --- Barra flotante de descanso -------------------------------------------- */
+.barra-descanso {
+  position: fixed; z-index: 45;
+  left: 16px; right: 16px;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 92px);
+  max-width: 500px; margin: 0 auto;
+  border-radius: var(--r-barra);
+  background: color-mix(in srgb, var(--fondo) 78%, transparent);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid var(--separador);
+  box-shadow: 0 8px 24px rgba(0,0,0,.14);
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px 10px 20px;
+  animation: bd-entra var(--t-entrada) var(--curva-entrada);
+}
+@keyframes bd-entra { from { opacity: 0; transform: translateY(16px); } }
+/* En la pantalla de entrenamiento no hay tabbar debajo: baja al borde */
+body:has(#vista-entreno:not(.oculta)) .barra-descanso {
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+}
+.bd-tiempo { display: flex; flex-direction: column; min-width: 68px; }
+.bd-num {
+  font-size: 26px; font-weight: 700; letter-spacing: -1px;
+  font-variant-numeric: tabular-nums; line-height: 1.05;
+}
+.bd-etiqueta {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.6px;
+  text-transform: uppercase; color: var(--texto2);
+}
+.bd-acciones { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.bd-ajustes { display: flex; gap: 6px; }
+.bd-btn {
+  min-width: 44px; min-height: 44px; padding: 0 10px;
+  border-radius: var(--r-boton); background: var(--superficie);
+  border: 1px solid var(--separador);
+  font-size: 14px; font-weight: 600; color: var(--texto);
+  font-variant-numeric: tabular-nums;
+  transition: transform 120ms ease, background-color 120ms ease;
+}
+.bd-btn:active { transform: scale(0.94); }
+.bd-saltar { background: none; border-color: transparent; color: var(--texto2); }
+.barra-descanso.late .bd-num { animation: timer-late 1s ease infinite; }
+.barra-descanso.fin { border-color: var(--verde); }
+.barra-descanso.fin .bd-num, .barra-descanso.fin .bd-etiqueta { color: var(--verde); }
+.barra-descanso.bd-bloque .bd-num { color: var(--rojo); }
 
 /* --- Estado de guardado ---------------------------------------------------- */
 .sync-indicador {
