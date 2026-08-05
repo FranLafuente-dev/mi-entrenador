@@ -170,6 +170,23 @@ img { max-width: 100%; display: block; }
   font-size: 14px; color: var(--texto); text-align: left; line-height: 1.4;
 }
 .login-error b { color: var(--rojo); }
+.login-aviso {
+  margin-top: 16px; font-size: 13px; color: var(--texto2); line-height: 1.45;
+}
+/* El botón lo dibuja Google en un iframe propio: solo se lo centra */
+.gis-boton { display: flex; justify-content: center; min-height: 44px; margin-bottom: 12px; }
+.gis-boton:empty { display: none; }
+
+/* Diagnóstico de sesión (Ajustes) */
+.diag { margin-top: 12px; }
+.diag pre {
+  margin-top: 8px; padding: 12px; border-radius: var(--r-boton);
+  background: var(--superficie); border: 1px solid var(--separador);
+  font-size: 13px; line-height: 1.5; color: var(--texto2);
+  white-space: pre-wrap; word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  max-height: 260px; overflow-y: auto;
+}
 
 /* Esqueletos de carga (nunca un spinner) */
 .esq {

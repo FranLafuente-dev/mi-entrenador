@@ -11,14 +11,15 @@
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
 import {
-  getAuth, GoogleAuthProvider, onAuthStateChanged,
-  signInWithRedirect, signInWithPopup, getRedirectResult, signOut,
+  getAuth, initializeAuth, GoogleAuthProvider, onAuthStateChanged,
+  signInWithCredential, signInWithPopup, signInWithRedirect, getRedirectResult, signOut,
+  indexedDBLocalPersistence, browserLocalPersistence, browserPopupRedirectResolver,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
   doc, collection, setDoc, getDoc, onSnapshot,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-import { firebaseConfig } from "./firebase-config.js";
+import { firebaseConfig, googleClientId } from "./firebase-config.js";
 
 /* ==========================================================================
    ESTADO GLOBAL
@@ -58,15 +59,45 @@ function esc(t) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-/* --- Fechas (todo en hora local) --- */
+/* --- Fechas ------------------------------------------------------------------
+   REGLA ÚNICA: el día calendario es SIEMPRE el de Buenos Aires, no importa la
+   zona horaria que tenga configurada el teléfono. El día pasa a las 00:00 de
+   Argentina y en ningún lado se asume UTC.
+
+   `fmtISO`/`parseISO` son aritmética civil pura: convierten entre "YYYY-MM-DD"
+   y un Date al mediodía local, que es solo un envase para sumar y restar días
+   sin cruzarse de fecha. No consultan el reloj y por eso dan igual en todos los
+   dispositivos. La única función que mira la hora real es `hoyISO()`.        */
+const TZ = "America/Argentina/Buenos_Aires";
+
+const _fmtDiaTZ = new Intl.DateTimeFormat("en-CA", {
+  timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit",
+});
+const _fmtHoraTZ = new Intl.DateTimeFormat("es-AR", {
+  timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false,
+});
+function _partes(fmt, fecha) {
+  const p = {};
+  for (const x of fmt.formatToParts(fecha)) p[x.type] = x.value;
+  return p;
+}
+
 function fmtISO(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 function parseISO(iso) {
   const [y, m, d] = iso.split("-").map(Number);
-  return new Date(y, m - 1, d);
+  return new Date(y, m - 1, d, 12);   // mediodía: inmune a saltos de horario
 }
-function hoyISO() { return fmtISO(new Date()); }
+/* El día de hoy en Buenos Aires. Único punto del código que lee el reloj. */
+function hoyISO() {
+  const p = _partes(_fmtDiaTZ, new Date());
+  return `${p.year}-${p.month}-${p.day}`;
+}
+/* La hora de Buenos Aires (0-23), para los mensajes que cambian de tono. */
+function horaAhora() {
+  return Number(_partes(_fmtHoraTZ, new Date()).hour);
+}
 function sumarDias(iso, n) { const d = parseISO(iso); d.setDate(d.getDate() + n); return fmtISO(d); }
 function diaSemanaDe(iso) { return parseISO(iso).getDay(); }
 function lunesDe(iso) {
@@ -79,7 +110,7 @@ function claveSemana(iso) {
   const d = parseISO(iso);
   d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
   const anio = d.getFullYear();
-  const ene4 = new Date(anio, 0, 4);
+  const ene4 = parseISO(`${anio}-01-04`);   // mismo envase que d: la resta da días exactos
   const sem = 1 + Math.round(((d - ene4) / 86400000 - 3 + ((ene4.getDay() + 6) % 7)) / 7);
   return `${anio}-W${String(sem).padStart(2, "0")}`;
 }
@@ -93,8 +124,8 @@ function fmtFechaCorta(iso) {
 }
 function fmtHora(ts) {
   if (!ts) return "";
-  const d = new Date(ts);
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  const p = _partes(_fmtHoraTZ, new Date(ts));
+  return `${p.hour}:${p.minute}`;
 }
 function fmtDuracion(seg) {
   const m = Math.round(seg / 60);
@@ -147,8 +178,9 @@ function contarNumero(nodo, hasta, { dur = 600, dec = 0, prefijo = "", sufijo = 
 function sargento(clave, vars = {}) {
   const lista = (typeof MENSAJES !== "undefined" && MENSAJES[clave]) || [];
   if (!lista.length) return "";
-  const ahora = new Date();
-  const dia = Math.floor((ahora.getTime() - ahora.getTimezoneOffset() * 60000) / 86400000);
+  // El mensaje rota una vez por día calendario argentino, igual en todos los teléfonos.
+  const [anio, mes, diaMes] = hoyISO().split("-").map(Number);
+  const dia = Math.floor(Date.UTC(anio, mes - 1, diaMes) / 86400000);
   let hash = 0;
   for (const c of clave) hash = (hash * 31 + c.charCodeAt(0)) & 0xffff;
   let m = lista[(dia + hash) % lista.length];
@@ -195,7 +227,23 @@ function modoPrueba() { return localStorage.getItem("modoPrueba") === "1"; }
 function durT(seg) { return modoPrueba() ? 10 : seg; }
 
 /* ==========================================================================
-   FIREBASE — arranque con la puerta de autenticación
+   AUTENTICACIÓN
+   --------------------------------------------------------------------------
+   Por qué no se usa el flujo de redirect de Firebase: ese flujo abre un
+   iframe contra `authDomain` (mis-finanzas-d65e0.firebaseapp.com), que es un
+   dominio distinto del que sirve la app (franlafuente-dev.github.io). Safari
+   particiona el almacenamiento de ese tercer dominio, así que el token nunca
+   vuelve al origen de la app: queda cargando o rebota al login. En GitHub
+   Pages no se puede aplicar el arreglo oficial (servir el manejador desde el
+   propio dominio con un proxy inverso).
+
+   En su lugar: Google Identity Services devuelve un ID token sin iframes
+   entre dominios, y ese token se le entrega a Firebase con
+   signInWithCredential. Funciona igual instalada en la pantalla de inicio.
+
+   REGLA: la app NUNCA cierra sesión sola. `signOut` se llama en un solo lugar
+   de todo el proyecto, `cerrarSesionManual()`, y solo desde el botón de
+   Ajustes. Un error de red o de permisos jamás devuelve al login.
    ========================================================================== */
 let refs = null;
 
@@ -208,32 +256,148 @@ function esStandalone() {
     window.matchMedia("(display-mode: standalone)").matches;
 }
 
-async function iniciarFirebase() {
+/* --- Bitácora de sesión: sobrevive a recargas y se puede leer en Ajustes --- */
+const AUTH_LOG = [];
+try {
+  const previo = JSON.parse(localStorage.getItem("authLog") || "[]");
+  if (Array.isArray(previo)) AUTH_LOG.push(...previo.slice(-40));
+} catch (_) { }
+
+function logAuth(msj) {
+  const linea = `${fmtHora(Date.now())} · ${msj}`;
+  AUTH_LOG.push(linea);
+  while (AUTH_LOG.length > 40) AUTH_LOG.shift();
+  try { localStorage.setItem("authLog", JSON.stringify(AUTH_LOG)); } catch (_) { }
+  console.log("[auth]", linea);
+}
+
+function iniciarFirebase() {
+  logAuth(`arranque · ${esStandalone() ? "instalada" : "navegador"} · ${esIOS() ? "iOS" : "otro"}`);
   const app = initializeApp(firebaseConfig);
-  S.auth = getAuth(app);
+
+  // Persistencia explícita: IndexedDB primero, localStorage de respaldo.
+  // Con initializeAuth queda fijada ANTES del primer chequeo de sesión, así no
+  // hay ventana en la que la sesión guardada todavía no se haya restaurado.
+  try {
+    S.auth = initializeAuth(app, {
+      persistence: [indexedDBLocalPersistence, browserLocalPersistence],
+      popupRedirectResolver: browserPopupRedirectResolver,
+    });
+  } catch (e) {
+    logAuth(`initializeAuth falló (${e?.code || e?.message}), sigo con getAuth`);
+    S.auth = getAuth(app);
+  }
+
   S.db = initializeFirestore(app, {
     localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
   });
 
-  // 1) Resolver el retorno del redirect ANTES de decidir pantalla.
-  let errorRedirect = null;
-  try { await getRedirectResult(S.auth); }
-  catch (e) { errorRedirect = e; }
-
-  // 2) Recién ahora, el estado de sesión decide qué se ve.
+  // El listener se registra PRIMERO y sin esperar nada. Es lo único que decide
+  // qué pantalla se ve. Antes esto iba después de `await getRedirectResult`, y
+  // si esa promesa no resolvía (justo lo que pasa en Safari), el listener no
+  // llegaba a registrarse nunca y la app quedaba cargando para siempre.
   onAuthStateChanged(S.auth, (user) => {
     if (user) {
+      const cambioDeUsuario = S.user?.uid !== user.uid;
+      logAuth(`sesión activa: ${user.email}${cambioDeUsuario ? "" : " (refresco)"}`);
       S.user = user;
-      prepararRefs();
-      conectarDatos();
-      if (!S.cargado) mostrarVista("carga");   // esqueleto hasta tener datos
+      if (cambioDeUsuario) {
+        prepararRefs();
+        conectarDatos();
+      }
+      if (!S.cargado) mostrarVista("carga");
     } else {
+      logAuth("sin sesión → pantalla de login");
       S.user = null;
       S.cargado = false;
       mostrarVista("login");
-      if (errorRedirect) { mostrarErrorLogin(errorRedirect); errorRedirect = null; }
+      prepararGoogle();
     }
+  }, (e) => {
+    // Error del propio observador: no es motivo para expulsar a nadie.
+    logAuth(`error del observador: ${e?.code || e?.message || e}`);
   });
+
+  // Solo por si quedó un redirect viejo en vuelo de la versión anterior.
+  // Va suelto a propósito: no puede bloquear el arranque.
+  getRedirectResult(S.auth)
+    .then((r) => { if (r?.user) logAuth(`redirect heredado resuelto: ${r.user.email}`); })
+    .catch((e) => logAuth(`redirect heredado falló: ${e?.code || e?.message}`));
+}
+
+/* --- Google Identity Services ---------------------------------------------- */
+let gisListo = false;
+
+function cargarScriptGIS() {
+  return new Promise((resolver, rechazar) => {
+    if (window.google?.accounts?.id) return resolver();
+    const s = document.createElement("script");
+    s.src = "https://accounts.google.com/gsi/client";
+    s.async = true;
+    s.onload = () => resolver();
+    s.onerror = () => rechazar(new Error("No se pudo cargar el cliente de Google."));
+    document.head.appendChild(s);
+  });
+}
+
+async function prepararGoogle() {
+  if (gisListo) return;
+  const cid = (googleClientId || "").trim();
+
+  if (!cid || cid.startsWith("PEGAR")) {
+    avisoLogin("Falta pegar el Client ID de Google en firebase-config.js. " +
+      "Mientras tanto podés entrar con el botón de abajo (funciona en Android y en la compu).");
+    return;
+  }
+  if (!navigator.onLine) {
+    avisoLogin("Sin conexión. Conectate para entrar la primera vez; después la sesión queda guardada.");
+    return;
+  }
+
+  try {
+    await cargarScriptGIS();
+  } catch (e) {
+    logAuth("no cargó el script de Google");
+    avisoLogin("No se pudo contactar a Google. Probá con el botón de abajo.");
+    return;
+  }
+
+  try {
+    window.google.accounts.id.initialize({
+      client_id: cid,
+      callback: recibirCredencialGoogle,
+      auto_select: true,            // si ya entró antes, entra solo
+      cancel_on_tap_outside: false,
+      use_fedcm_for_prompt: true,   // el camino que Safari y Chrome sí permiten
+      context: "signin",
+    });
+    window.google.accounts.id.renderButton($("#gis-boton"), {
+      type: "standard", theme: "filled_black", size: "large",
+      text: "signin_with", shape: "pill", locale: "es-419", width: 280,
+    });
+    window.google.accounts.id.prompt();
+    gisListo = true;
+    logAuth("Google Identity Services listo");
+  } catch (e) {
+    logAuth(`GIS no se pudo inicializar: ${e?.message || e}`);
+    avisoLogin("Google no respondió como se esperaba. Probá con el botón de abajo.");
+  }
+}
+
+async function recibirCredencialGoogle(respuesta) {
+  if (!respuesta?.credential) {
+    logAuth("Google no devolvió credencial");
+    return;
+  }
+  logAuth("Google devolvió el ID token; se lo paso a Firebase");
+  $("#login-error").classList.add("oculta");
+  try {
+    await signInWithCredential(S.auth, GoogleAuthProvider.credential(respuesta.credential));
+    logAuth("signInWithCredential OK");
+  } catch (e) {
+    logAuth(`signInWithCredential falló: ${e?.code || e?.message}`);
+    mostrarErrorLogin(e);
+  }
 }
 
 function prepararRefs() {
@@ -257,32 +421,45 @@ function mostrarErrorLogin(e) {
   let ayuda = "";
   if (codigo.includes("unauthorized-domain")) ayuda = "Este dominio no está autorizado en Firebase (Authentication → Settings → Authorized domains).";
   else if (codigo.includes("network")) ayuda = "Parece un problema de conexión. Probá de nuevo con señal.";
+  else if (codigo.includes("invalid-credential")) ayuda = "Revisá que el Client ID de firebase-config.js sea el del proyecto mis-finanzas-d65e0.";
   caja.innerHTML = `<b>No se pudo entrar.</b><br>${esc(e?.message || e)}${ayuda ? `<br><br>${esc(ayuda)}` : ""}`;
   caja.classList.remove("oculta");
 }
 
+function avisoLogin(texto) {
+  const caja = $("#login-aviso");
+  caja.textContent = texto;
+  caja.classList.remove("oculta");
+}
+
+/* Botón de respaldo: popup (Android y escritorio). El redirect quedó como
+   último recurso y solo fuera de iOS, donde es justamente el que no vuelve. */
 async function entrar() {
   $("#login-error").classList.add("oculta");
   const proveedor = new GoogleAuthProvider();
   try {
-    if (esIOS() && esStandalone()) {
-      // PWA instalada en iOS: el popup no funciona, va redirect.
-      await signInWithRedirect(S.auth, proveedor);
-    } else {
-      // Android Chrome y escritorio: popup, con redirect de repuesto.
-      try {
-        await signInWithPopup(S.auth, proveedor);
-      } catch (e) {
-        if (e && (e.code === "auth/popup-blocked" ||
-                  e.code === "auth/operation-not-supported-in-this-environment" ||
-                  e.code === "auth/cancelled-popup-request")) {
-          await signInWithRedirect(S.auth, proveedor);
-        } else throw e;
-      }
-    }
+    logAuth("entrada manual con popup");
+    await signInWithPopup(S.auth, proveedor);
   } catch (e) {
+    const recuperable = e && (e.code === "auth/popup-blocked" ||
+      e.code === "auth/operation-not-supported-in-this-environment" ||
+      e.code === "auth/cancelled-popup-request");
+    if (recuperable && !esIOS()) {
+      logAuth(`popup bloqueado (${e.code}), voy por redirect`);
+      try { await signInWithRedirect(S.auth, proveedor); return; } catch (e2) { e = e2; }
+    }
+    if (e.code === "auth/popup-closed-by-user") { logAuth("popup cerrado por el usuario"); return; }
+    logAuth(`entrada manual falló: ${e?.code || e?.message}`);
     mostrarErrorLogin(e);
   }
+}
+
+/* El ÚNICO signOut del proyecto. Si aparece otro, es un bug. */
+async function cerrarSesionManual() {
+  logAuth("cierre de sesión pedido por el usuario");
+  try { window.google?.accounts?.id?.disableAutoSelect(); } catch (_) { }
+  gisListo = false;
+  await signOut(S.auth);
 }
 
 /* ==========================================================================
@@ -306,30 +483,41 @@ function errorDatos(e) {
   }
 }
 
+/* Si un listener falla, igual hay que marcarlo como resuelto: de lo contrario
+   `alCambiarDatos` espera a los cuatro para siempre y la app se queda en el
+   esqueleto de carga sin decir por qué. */
+function alFallarListener(cual) {
+  return (e) => {
+    S.listo[cual] = true;
+    errorDatos(e);
+    alCambiarDatos();
+  };
+}
+
 function conectarDatos() {
   onSnapshot(refs.config, (snap) => {
     S.config = snap.exists() ? snap.data() : null;
     S.listo.config = true;
     alCambiarDatos();
-  }, errorDatos);
+  }, alFallarListener("config"));
   onSnapshot(refs.dias, (snap) => {
     S.dias = new Map();
     snap.forEach((d) => S.dias.set(d.id, d.data()));
     S.listo.dias = true;
     alCambiarDatos();
-  }, errorDatos);
+  }, alFallarListener("dias"));
   onSnapshot(refs.pesajes, (snap) => {
     S.pesajes = new Map();
     snap.forEach((d) => S.pesajes.set(d.id, d.data()));
     S.listo.pesajes = true;
     alCambiarDatos();
-  }, errorDatos);
+  }, alFallarListener("pesajes"));
   onSnapshot(refs.semanas, (snap) => {
     S.semanas = new Map();
     snap.forEach((d) => S.semanas.set(d.id, d.data()));
     S.listo.semanas = true;
     alCambiarDatos();
-  }, errorDatos);
+  }, alFallarListener("semanas"));
 }
 
 let seedEnCurso = false;
@@ -337,7 +525,9 @@ let seedEnCurso = false;
 async function alCambiarDatos() {
   if (!S.listo.config || !S.listo.dias || !S.listo.pesajes || !S.listo.semanas) return;
 
-  if (!S.config && !seedEnCurso) {
+  // Sin config y sin error: es la primera vez, se siembra. Con error de por
+  // medio no se siembra nada, para no pisar datos que quizá sí existen.
+  if (!S.config && !seedEnCurso && !S.errorDatos) {
     seedEnCurso = true;
     try { await cargarSemilla(); } catch (e) { errorDatos(e); }
     seedEnCurso = false;
@@ -933,7 +1123,7 @@ function renderInicio() {
   const plan = planDelDia(hoy);
   const reg = regReal(hoy);
   const estado = estadoDia(hoy);
-  const hora = new Date().getHours();
+  const hora = horaAhora();
   const { racha, semanaActual } = calcularRacha();
   const pendientes = pendientesDeRecuperar();
   const rutinaHoy = plan.tipo === "entreno" ? RUTINAS[plan.rutina] : null;
@@ -1061,7 +1251,7 @@ function renderRacha(racha, semanaActual) {
   const rango = rangoDe(racha);
   const proximas = proximasSesiones(semanaActual);
   const hoy = hoyISO();
-  const hora = new Date().getHours();
+  const hora = horaAhora();
   const dow = diaSemanaDe(hoy);
 
   const galones = Array.from({ length: CONFIG.sesionesPorSemana }, (_, i) =>
@@ -2983,7 +3173,11 @@ function renderAjustes() {
     <div class="seccion-titulo">Cuenta</div>
     <div class="config-fila"><span>${esc(S.user?.email || "")}</span>
       <button id="cfg-salir" class="btn btn-texto">Cerrar sesión</button></div>
-    <p class="dato centrado mt">Rutinas v${RUTINAS_VERSION} · fecha de inicio ${fmtFechaCorta(pisoFecha())}</p>`;
+    <div class="config-fila"><span>Diagnóstico de sesión<small>Últimos movimientos del login</small></span>
+      <button id="cfg-diag" class="btn btn-texto">Ver</button></div>
+    <div id="cfg-diag-caja" class="oculta"></div>
+    <p class="dato centrado mt">Rutinas v${RUTINAS_VERSION} · fecha de inicio ${fmtFechaCorta(pisoFecha())}
+      <br>Día calendario según ${TZ} · hoy es ${hoyISO()}</p>`;
 
   $("#cfg-tema").querySelectorAll("button").forEach((b) => {
     b.onclick = () => {
@@ -3019,7 +3213,31 @@ function renderAjustes() {
     </div>`;
     g.classList.remove("oculta");
   };
-  $("#cfg-salir").onclick = async () => { await signOut(S.auth); };
+  $("#cfg-diag").onclick = () => {
+    const caja = $("#cfg-diag-caja");
+    if (!caja.classList.contains("oculta")) { caja.classList.add("oculta"); return; }
+    const zona = Intl.DateTimeFormat().resolvedOptions().timeZone || "desconocida";
+    caja.innerHTML = `
+      <div class="diag">
+        <div class="dato">Zona horaria del teléfono: ${esc(zona)}</div>
+        <div class="dato">Día calendario que usa la app: ${hoyISO()} (${TZ})</div>
+        <div class="dato">Modo: ${esStandalone() ? "instalada" : "navegador"}${esIOS() ? " · iOS" : ""}</div>
+        <pre>${esc(AUTH_LOG.join("\n") || "sin registros")}</pre>
+      </div>`;
+    caja.classList.remove("oculta");
+  };
+  $("#cfg-salir").onclick = () => {
+    abrirHoja(`
+      <h3>¿Cerrar sesión?</h3>
+      <p class="texto-2">Tus datos quedan guardados en la nube. Vas a tener que
+      entrar de nuevo con Google para volver a verlos.</p>
+      <div class="hoja-acciones">
+        <button id="salir-confirmar" class="btn btn-rojo btn-grande">Cerrar sesión</button>
+        <button id="salir-no" class="btn btn-borde btn-grande">Quedarme adentro</button>
+      </div>`);
+    $("#salir-no").onclick = () => cerrarHoja(true);
+    $("#salir-confirmar").onclick = async () => { cerrarHoja(true); await cerrarSesionManual(); };
+  };
 }
 
 /* ==========================================================================
@@ -3050,6 +3268,12 @@ if ("serviceWorker" in navigator) {
   });
 }
 
+/* Si vuelve la conexión estando en el login, se reintenta armar el botón. */
+window.addEventListener("online", () => {
+  logAuth("volvió la conexión");
+  if (vistaActual === "login") { $("#login-aviso").classList.add("oculta"); prepararGoogle(); }
+});
+
 /* Arranque: pantalla de carga hasta que la autenticación se resuelva */
 mostrarVista("carga");
 if (firebaseConfig.apiKey.startsWith("PEGAR")) {
@@ -3058,4 +3282,27 @@ if (firebaseConfig.apiKey.startsWith("PEGAR")) {
   $("#login-error").classList.remove("oculta");
 } else {
   iniciarFirebase();
+
+  // Cinturón de seguridad: si a los 12 segundos seguimos mirando el esqueleto,
+  // algo se colgó. Antes que dejar la pantalla cargando para siempre, se dice
+  // qué pasó y se ofrece salida. No cierra sesión: solo informa.
+  setTimeout(() => {
+    if (vistaActual !== "carga" || S.cargado) return;
+    logAuth("12 s sin resolver el arranque");
+    const carga = $("#vista-carga");
+    if ($("#carga-error")) return;
+    const caja = el("div", "login-error",
+      `<b>Está tardando más de lo normal.</b><br>` +
+      (S.user
+        ? "La sesión está bien, pero los datos no llegan. Puede ser la conexión."
+        : "No se pudo confirmar la sesión.") +
+      "<br><br>Podés reintentar, o entrar con Google de nuevo.");
+    caja.id = "carga-error";
+    const reintentar = el("button", "btn btn-primario btn-grande mt", "Reintentar");
+    reintentar.onclick = () => location.reload();
+    const irLogin = el("button", "btn btn-texto", "Ir a la pantalla de login");
+    irLogin.style.width = "100%";
+    irLogin.onclick = () => { mostrarVista("login"); prepararGoogle(); };
+    carga.append(caja, reintentar, irLogin);
+  }, 12000);
 }
