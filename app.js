@@ -307,20 +307,78 @@ function svgGalon(estado, extra = "") {
     <path class="galon-${estado}" d="M12 2.5 22 10v5L12 8 2 15v-5z"/></svg>`;
 }
 
-/* La insignia del rango: el elemento visual más fuerte del inicio. Escudo con
-   tres galones GRANDES y centrados, el de arriba en rojo desde Sargento
-   Primero. Los galones tienen que leerse de un vistazo a 52 px. */
-function svgInsignia(clase) {
-  const galon = (y, cls) =>
-    `<path class="ins-galon ${cls}" d="M14 ${y + 13} 34 ${y} 54 ${y + 13}v9L34 ${y + 9} 14 ${y + 22}z"/>`;
+/* ==========================================================================
+   LA INSIGNIA — el escudo se PINTA con el progreso, no es un adorno
+   --------------------------------------------------------------------------
+   Tres capas superpuestas dentro de la silueta del escudo:
+     · ganado   — lo que ya te llevaste, sólido y permanente.
+     · semana   — lo que esta semana va a agregar. Su altura crece con cada
+                  sesión marcada: con 2 de 3 está al 66% de su tamaño final.
+     · fantasma — una línea punteada en el techo al que va a llegar el pintado
+                  cuando completes la semana. Es lo que hace que un escudo
+                  vacío diga algo en vez de estar mudo.
+   Todo va recortado contra el escudo, así los galones no pueden volver a
+   sobresalir por los costados cuando la silueta se afina abajo.
+   ========================================================================== */
+let contadorInsignias = 0;
+
+function svgInsignia(clase, { ganado = 0, alCompletar = 0, conSemana = 0 } = {}) {
+  const id = `esc${++contadorInsignias}`;
+  const ESCUDO = "M34 3 63 13v29c0 19-12 30-29 39C18 72 5 61 5 42V13z";
+  const ARRIBA = 6, ABAJO = 80;
+  const y = (p) => ABAJO - (ABAJO - ARRIBA) * Math.max(0, Math.min(1, p));
+
+  const yGanado = y(ganado);
+  const yConSemana = y(conSemana);
+  const yFantasma = y(alCompletar);
+  const altoSemana = Math.max(0, yGanado - yConSemana);
+
+  const galon = (yg, cls) =>
+    `<path class="ins-galon ${cls}" d="M14 ${yg + 13} 34 ${yg} 54 ${yg + 13}v9L34 ${yg + 9} 14 ${yg + 22}z"/>`;
+
   return `
     <svg class="insignia" viewBox="0 0 68 84" aria-hidden="true">
-      <path class="ins-escudo" d="M34 3 63 13v29c0 19-12 30-29 39C18 72 5 61 5 42V13z"/>
-      ${galon(16, clase === "r-elite" ? "ins-rojo" : "")}
-      ${galon(32, "")}
-      ${galon(48, "")}
-      <rect class="ins-brillo" x="-14" y="0" width="18" height="84"/>
+      <defs><clipPath id="${id}"><path d="${ESCUDO}"/></clipPath></defs>
+      <path class="ins-fondo" d="${ESCUDO}"/>
+      <g clip-path="url(#${id})">
+        <rect class="ins-ganado" x="0" y="${yGanado.toFixed(1)}" width="68" height="${(84 - yGanado).toFixed(1)}"/>
+        ${altoSemana > 0.5 ? `<rect class="ins-semana" x="0" y="${yConSemana.toFixed(1)}"
+          width="68" height="${altoSemana.toFixed(1)}"/>` : ""}
+        ${alCompletar > ganado + 0.01 ? `<line class="ins-fantasma"
+          x1="0" y1="${yFantasma.toFixed(1)}" x2="68" y2="${yFantasma.toFixed(1)}"/>` : ""}
+      </g>
+      <g clip-path="url(#${id})">
+        ${galon(16, clase === "r-elite" ? "ins-rojo" : "")}
+        ${galon(32, "")}
+        ${galon(48, "")}
+        <rect class="ins-brillo" x="-14" y="0" width="18" height="84"/>
+      </g>
+      <path class="ins-borde" d="${ESCUDO}"/>
     </svg>`;
+}
+
+/* Cuánto del rango actual está pintado, cuánto agrega esta semana y hasta
+   dónde va a llegar si la completa. Todo en 0..1. */
+function progresoDelRango(racha, semanaActual) {
+  const idx = rangoIndice(racha);
+  const actual = RANGOS[idx];
+  const siguiente = RANGOS[idx + 1];
+  if (!siguiente) return { ganado: 1, alCompletar: 1, conSemana: 1, siguiente: null, faltan: 0 };
+
+  const tramo = Math.max(1, siguiente.semanas - actual.semanas);
+  const ganado = Math.max(0, Math.min(1, (racha - actual.semanas) / tramo));
+  const unaSemana = 1 / tramo;
+  const pctSemana = semanaActual.objetivo > 0
+    ? Math.min(1, semanaActual.sesiones / semanaActual.objetivo) : 0;
+
+  return {
+    ganado,
+    conSemana: Math.min(1, ganado + unaSemana * pctSemana),
+    alCompletar: Math.min(1, ganado + unaSemana),
+    siguiente,
+    faltan: Math.max(0, siguiente.semanas - racha),
+    pctSemana,
+  };
 }
 /* ==========================================================================
    BOTELLA DE AGUA — se llena con lo que llevo tomado y el líquido se mueve
@@ -1934,21 +1992,51 @@ function renderRacha(racha, semanaActual) {
   if (semanaActual.causasMayores) motivos.push(`${semanaActual.causasMayores} causa${semanaActual.causasMayores > 1 ? "s" : ""} mayor${semanaActual.causasMayores > 1 ? "es" : ""}`);
   const marca = motivos.length ? `· ${esc(motivos.join(" y "))}` : "";
 
+  /* Las dos barras van juntas y arriba, justo debajo del nombre del rango.
+     La de rango lleva marcado, con una línea, hasta dónde llegaría si
+     completa esta semana; la de semana es el zoom de ese tramo. */
+  const p = progresoDelRango(racha, semanaActual);
+  const barras = p.siguiente ? `
+    <div class="racha-barras">
+      <div class="rb-linea">
+        <span class="rb-etiqueta">Próximo</span>
+        <b class="rb-nombre">${esc(p.siguiente.nombre)}</b>
+        <span class="rb-falta num">${p.faltan === 1 ? "falta 1 semana" : `faltan ${p.faltan} semanas`}</span>
+      </div>
+      <div class="rb-barra">
+        <i class="rb-ganado" style="width:${(p.ganado * 100).toFixed(0)}%"></i>
+        <i class="rb-semana" style="left:${(p.ganado * 100).toFixed(0)}%;width:${((p.conSemana - p.ganado) * 100).toFixed(0)}%"></i>
+        <i class="rb-fantasma" style="left:${(p.alCompletar * 100).toFixed(0)}%"></i>
+      </div>
+      <div class="rb-barra rb-barra-semana">
+        <i class="rb-ganado" style="width:${(p.pctSemana * 100).toFixed(0)}%"></i>
+      </div>
+      <!-- Los galones van en la misma línea que el contador: decían lo mismo
+           que la barra de semana y apilados eran 20 px de más. -->
+      <div class="rb-pie num">
+        <span class="racha-galones">${galones}</span>
+        <span>${semanaActual.sesiones} de ${semanaActual.objetivo}${
+          marca ? ` <span class="racha-marca">${marca.replace(/^· /, "· ")}</span>` : ""}</span>
+      </div>
+    </div>` : `
+    <div class="racha-barras">
+      <div class="rb-linea"><b class="rb-nombre">El rango más alto</b></div>
+      <div class="rb-pie num">
+        <span class="racha-galones">${galones}</span>
+        <span>${semanaActual.sesiones} de ${semanaActual.objetivo}</span>
+      </div>
+    </div>`;
+
   const zona = $("#racha-tarjeta");
   zona.innerHTML = `
     <button class="racha ${clase} ${semanaActual.completa ? "completa" : ""}">
       <div class="racha-datos">
         <div class="racha-rango">${esc(rango.nombre)}</div>
         <div class="racha-num num">${racha} <small>${racha === 1 ? "semana seguida" : "semanas seguidas"}</small></div>
-        <div class="racha-linea">
-          <span class="racha-galones">${galones}</span>
-          <span class="racha-semana num">${semanaActual.sesiones} de ${semanaActual.objetivo}</span>
-        </div>
-        ${semanaActual.caminatas > 0 ? `<div class="racha-extra">+ caminata esta semana</div>` : ""}
-        ${marca ? `<div class="racha-marca">${marca.replace(/^ /, "")}</div>` : ""}
+        ${barras}
         ${falta}${alerta}
       </div>
-      <div class="racha-insignia">${svgInsignia(clase)}</div>
+      <div class="racha-insignia">${svgInsignia(clase, p)}</div>
     </button>`;
   // Tocar la tarjeta del rango lleva al calendario.
   zona.querySelector(".racha").onclick = () => irA("calendario");
@@ -2029,56 +2117,39 @@ function contarLogros() {
   return { menciones, perfectos, hierros, corrida };
 }
 
+/* Los tres logros como tarjetitas: ícono grande, y los que faltan con el
+   número concreto de lo que te separa, no solo apagados. */
 function renderLogros() {
   const zona = $("#logros-zona");
   if (!zona) return;
-  const { racha } = calcularRacha();
   const { menciones, perfectos, hierros, corrida } = contarLogros();
+  const { semanaActual } = calcularRacha();
+  const limpias = corrida;   // semanas completas seguidas
 
-  /* Próximo rango: cuántas semanas faltan y cuánto del camino llevo. */
-  const idx = rangoIndice(racha);
-  const siguiente = RANGOS[idx + 1];
-  const actual = RANGOS[idx];
-  let barra = "";
-  if (siguiente) {
-    const desde = actual.semanas, hasta = siguiente.semanas;
-    const faltan = hasta - racha;
-    const pct = Math.max(0, Math.min(100, ((racha - desde) / (hasta - desde)) * 100));
-    barra = `
-      <div class="logros-proximo">
-        <div class="lp-texto">
-          <span class="lp-etiqueta">Próximo</span>
-          <b class="lp-rango">${esc(siguiente.nombre)}</b>
-          <span class="lp-falta num">${faltan === 1 ? "falta 1 semana" : `faltan ${faltan} semanas`}</span>
-        </div>
-        <div class="lp-barra"><i style="width:${pct.toFixed(0)}%"></i></div>
-      </div>`;
-  } else {
-    barra = `<div class="logros-proximo">
-      <div class="lp-texto"><b class="lp-rango">${esc(actual.nombre)}</b>
-      <span class="lp-etiqueta">el rango más alto</span></div></div>`;
-  }
-
-  /* Los tres logros, conseguidos o pendientes con su condición. */
   const defs = [
-    { icono: "🏅", nombre: "Mención de honor", n: menciones,
+    { icono: "🏅", nombre: "Mención", n: menciones,
+      cerca: `${semanaActual.sesiones}/${semanaActual.objetivo} + caminata`,
       falta: "Completá la semana y sumá una caminata en un día de descanso." },
     { icono: "🔥", nombre: "Mes perfecto", n: perfectos,
-      falta: `Cuatro semanas completas seguidas. Llevás ${corrida}.` },
+      cerca: `${limpias % 4} de 4 semanas`,
+      falta: `Cuatro semanas completas seguidas. Llevás ${limpias % 4}.` },
     { icono: "💪", nombre: "Mes de hierro", n: hierros,
-      falta: "Cuatro semanas completas seguidas, sin recuperar ni usar escudo." },
+      cerca: "sin recuperar",
+      falta: "Cuatro semanas completas seguidas, sin recuperar ni usar el escudo." },
   ];
 
-  const fila = defs.map((d, i) => `
-    <span class="logro ${d.n ? "logro-ok" : "logro-falta"}" style="animation-delay:${i * 70}ms"
-      title="${esc(d.n ? `Conseguido ${d.n} ${d.n === 1 ? "vez" : "veces"}` : d.falta)}">
-      <span class="logro-icono">${d.icono}</span>
-      <span class="logro-nombre">${esc(d.nombre)}</span>
-      ${d.n ? `<b class="logro-n num">×${d.n}</b>` : ""}
-    </span>`).join("");
+  zona.innerHTML = `
+    <div class="logros-fila">
+      ${defs.map((d, i) => `
+        <button class="logro ${d.n ? "logro-ok" : "logro-falta"}" style="animation-delay:${i * 70}ms">
+          <span class="logro-icono">${d.icono}</span>
+          <span class="logro-cuerpo">
+            <span class="logro-nombre">${esc(d.nombre)}</span>
+            <span class="logro-dato num">${d.n ? `conseguido ×${d.n}` : esc(d.cerca)}</span>
+          </span>
+        </button>`).join("")}
+    </div>`;
 
-  zona.innerHTML = `${barra}<div class="logros-fila">${fila}</div>`;
-  // Tocar un logro cuenta qué es y qué falta para conseguirlo.
   zona.querySelectorAll(".logro").forEach((n, i) => {
     n.onclick = () => {
       const d = defs[i];

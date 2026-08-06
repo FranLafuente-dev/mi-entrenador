@@ -228,22 +228,21 @@ img { max-width: 100%; display: block; }
   .vista-inicio .fila-2 .btn-medio { min-height: 40px; font-size: 14px; }
   /* Los logros se compactan, pero no se van */
   .vista-inicio .logro { font-size: 11px; padding: 3px 8px; }
-  .vista-inicio .logros-proximo { padding: 6px 12px; }
-  .vista-inicio .lp-rango { font-size: 14px; }
-  .vista-inicio .lp-falta { font-size: 11px; }
-  .vista-inicio .lp-barra { height: 5px; margin: 4px 0 2px; }
+  .vista-inicio .racha-barras { margin: 0 0 6px; }
+  .vista-inicio .rb-barra { height: 6px; margin-top: 4px; }
+  .vista-inicio .rb-barra-semana { height: 4px; margin-top: 3px; }
   .vista-inicio .logros-fila { margin-top: 6px; gap: 5px; }
   .vista-inicio #logros-zona { margin-top: 10px; }
 }
 /* Al límite: la tarjeta de peso se reduce a una sola línea */
 @media (max-height: 700px) {
   .vista-inicio .tarjeta-peso .peso-fila:nth-child(2) { display: none; }
-  .vista-inicio .logro-nombre { display: none; }   /* quedan ícono y contador */
-  .vista-inicio .logro { padding: 4px 10px; }
   .vista-inicio .racha-rango { font-size: 15px; }
-  .vista-inicio .racha-galones svg { width: 20px; height: 17px; }
+  .vista-inicio .racha-num { font-size: 12px; margin: 0 0 4px; }
+  .vista-inicio .racha-galones svg { width: 18px; height: 15px; }
   .vista-inicio .frase { line-height: 1.25; }
-  .vista-inicio .lp-etiqueta { display: none; }
+  .vista-inicio .rb-etiqueta { display: none; }
+  .vista-inicio .rb-pie { font-size: 10px; margin-top: 3px; }
   /* Los espaciados son lo primero que se comprime: seis huecos más chicos y
      menos margen inferior liberan casi 40 px sin tocar ningún contenido. */
   .vista-inicio { gap: 4px; padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 78px); }
@@ -258,9 +257,9 @@ img { max-width: 100%; display: block; }
   .vista-inicio .fila-2 .tarjeta { min-height: 0; }
   .vista-inicio .tg-manana { font-size: 10px; padding-top: 4px; }
   .vista-inicio #racha-tarjeta { min-height: 0; }
-  .vista-inicio .logros-proximo { padding: 5px 10px; }
   .vista-inicio #logros-zona { margin-top: 4px; }
-  .vista-inicio .logros-fila { margin-top: 4px; }
+  .vista-inicio .logro { padding: 6px 8px; gap: 6px; }
+  .vista-inicio .logro-icono { font-size: 17px; }
 }
 
 /* Pantallas muy bajas: se va la línea de "mañana toca", que es lo único
@@ -274,8 +273,15 @@ img { max-width: 100%; display: block; }
 body.con-barra-sesion .vista-inicio .tg-manana,
 body.con-barra-sesion .vista-inicio .racha-alerta,
 body.con-barra-sesion .vista-inicio .racha-falta { display: none; }
-body.con-barra-sesion .vista-inicio .logros-fila { display: none; }
+body.con-barra-sesion .vista-inicio .logro-dato,
+body.con-barra-sesion .vista-inicio .rb-pie { display: none; }
 body.con-barra-sesion .vista-inicio .racha-num { margin-bottom: 4px; }
+/* Con la sesión abierta el titular pierde protagonismo: el banner ya dice
+   qué estás haciendo. Achicarlo evita que la fila se recorte. */
+/* Tamaño fijo, no clamp: con vh la altura de línea queda fraccionada y el
+   contenedor, que recorta, se queda 0,1 px corto y muerde el titular. */
+body.con-barra-sesion .vista-inicio .titular { font-size: 18px; line-height: 22px; }
+body.con-barra-sesion .vista-inicio .fila-2 .tarjeta { min-height: clamp(72px, 10vh, 100px); }
 @media (max-height: 700px) {
   body.con-barra-sesion .vista-inicio .frase { display: none; }
 }
@@ -455,12 +461,67 @@ body.con-barra-sesion .vista-inicio .racha-num { margin-bottom: 4px; }
 .racha-alerta { font-size: 12px; font-weight: 700; color: var(--rojo); margin-top: 8px; }
 .racha-congelada { font-size: 12px; font-weight: 700; color: var(--amarillo); margin-top: 8px; }
 
-/* La insignia: ocupa el alto de la tarjeta y no se achica nunca */
+/* --- La insignia: se pinta con el progreso ---------------------------------
+   ganado sólido · esta semana latiendo encima · fantasma marcando el techo. */
 .racha-insignia { flex: none; display: flex; align-items: center; }
 .insignia { width: 62px; height: 78px; display: block; }
-.ins-escudo { fill: none; stroke: currentColor; stroke-width: 3; opacity: .55; }
-.ins-galon { fill: currentColor; }
+.ins-fondo { fill: currentColor; opacity: .08; }
+.ins-borde { fill: none; stroke: currentColor; stroke-width: 2.5; opacity: .5; }
+.ins-ganado {
+  fill: var(--verde);
+  transition: y 700ms var(--curva-entrada), height 700ms var(--curva-entrada);
+}
+.ins-semana {
+  fill: var(--verde); opacity: .42;
+  animation: ins-late 2.4s ease-in-out infinite;
+  transition: y 700ms var(--curva-entrada), height 700ms var(--curva-entrada);
+}
+@keyframes ins-late { 50% { opacity: .70; } }
+.ins-fantasma {
+  stroke: currentColor; stroke-width: 1.6; stroke-dasharray: 3 3; opacity: .55;
+}
+.ins-galon { fill: currentColor; opacity: .92; }
 .ins-brillo { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .ins-semana { animation: none; opacity: .55; }
+}
+
+/* --- Las dos barras, debajo del rango -------------------------------------- */
+.racha-barras { margin: 2px 0 8px; }
+.rb-linea { display: flex; align-items: baseline; gap: 6px; }
+.rb-etiqueta {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.6px;
+  text-transform: uppercase; opacity: .6;
+}
+.rb-nombre { font-size: 13px; font-weight: 700; letter-spacing: -0.2px; }
+.rb-falta { font-size: 11px; opacity: .7; margin-left: auto; white-space: nowrap; }
+.rb-barra {
+  position: relative; height: 7px; border-radius: 999px;
+  background: currentColor; margin-top: 5px; overflow: hidden;
+}
+.rb-barra > i { position: absolute; top: 0; bottom: 0; display: block; }
+/* El fondo de la barra es el color del texto muy bajado */
+.rb-barra { color: inherit; background-color: currentColor; }
+.racha .rb-barra { background-color: rgba(128,128,128,.28); }
+.rb-ganado {
+  left: 0; border-radius: 999px; background: var(--verde);
+  transition: width 700ms var(--curva-entrada);
+}
+.rb-semana {
+  border-radius: 999px; background: var(--verde); opacity: .45;
+  animation: ins-late 2.4s ease-in-out infinite;
+  transition: left 700ms var(--curva-entrada), width 700ms var(--curva-entrada);
+}
+.rb-fantasma {
+  width: 2px; background: currentColor; opacity: .8; border-radius: 0;
+  transition: left 700ms var(--curva-entrada);
+}
+.rb-barra-semana { height: 5px; margin-top: 4px; opacity: .85; }
+.rb-pie {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; opacity: .8; margin-top: 5px; font-weight: 600;
+}
+.rb-pie .racha-galones { flex: none; }
 
 /* --- Tratamiento 1: Recluta a Cabo. Gris, insignia en contorno ------------- */
 .racha.r-base { background: var(--superficie); color: var(--texto); }
@@ -522,50 +583,36 @@ body.con-barra-sesion .vista-inicio .racha-num { margin-bottom: 4px; }
    ========================================================================== */
 #logros-zona { margin-top: 16px; }
 
-.logros-proximo {
-  background: var(--superficie); border: 1px solid var(--separador);
-  border-radius: var(--r-boton); padding: 10px 14px;
-  box-shadow: var(--sombra-contacto);
-}
-.lp-texto { display: flex; align-items: baseline; gap: 8px; }
-.lp-falta { margin-left: auto; white-space: nowrap; }
-.lp-etiqueta {
-  font-size: 11px; font-weight: 600; letter-spacing: 0.6px;
-  text-transform: uppercase; color: var(--texto2);
-}
-.lp-rango { font-size: 15px; font-weight: 700; letter-spacing: -0.2px; }
-.lp-barra {
-  height: 6px; border-radius: 999px; background: var(--separador);
-  margin: 6px 0 0; overflow: hidden;
-}
-.lp-barra i {
-  display: block; height: 100%; border-radius: 999px;
-  background: linear-gradient(90deg, var(--verde), var(--celeste));
-  animation: lp-crece 900ms var(--curva-entrada) both;
-}
-@keyframes lp-crece { from { width: 0 !important; } }
-.lp-falta { font-size: 12px; color: var(--texto2); font-weight: 600; }
-
-.logros-fila { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+/* Tarjetitas: ícono grande y, si falta, cuánto falta en números */
+.logros-fila { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .logro {
-  display: inline-flex; align-items: center; gap: 5px;
-  border-radius: 999px; padding: 6px 12px; font-size: 12px; font-weight: 600;
+  display: flex; align-items: center; gap: 8px; text-align: left;
+  border-radius: var(--r-boton); padding: 8px 10px;
   border: 1px solid var(--separador); background: var(--superficie);
   animation: logro-entra var(--t-rebote) var(--curva-rebote) both;
+  transition: transform 120ms ease;
 }
+.logro:active { transform: scale(0.96); }
 @keyframes logro-entra { from { opacity: 0; transform: scale(0.8); } }
-.logro-icono { font-size: 13px; line-height: 1; }
-.logro-n { font-variant-numeric: tabular-nums; }
-/* Conseguido: color y un brillo lento que lo hace notar */
-.logro-ok {
-  background: color-mix(in srgb, var(--amarillo) 22%, var(--superficie));
-  border-color: color-mix(in srgb, var(--amarillo) 55%, transparent);
-  color: var(--texto);
+.logro-icono { font-size: 20px; line-height: 1; flex: none; }
+.logro-cuerpo { min-width: 0; }
+.logro-nombre {
+  display: block; font-size: 11px; font-weight: 700; letter-spacing: -0.1px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.logro-ok .logro-n { color: var(--texto); }
-/* Pendiente: apagado, pero visible para saber hacia dónde voy */
-.logro-falta { opacity: .45; }
-.logro-falta .logro-icono { filter: grayscale(1); }
+.logro-dato {
+  display: block; font-size: 10px; color: var(--texto2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Conseguido: color, y el ícono a tamaño completo */
+.logro-ok {
+  background: color-mix(in srgb, var(--amarillo) 20%, var(--superficie));
+  border-color: color-mix(in srgb, var(--amarillo) 55%, transparent);
+}
+.logro-ok .logro-dato { color: var(--texto); font-weight: 600; }
+/* Pendiente: apagado pero legible, con el número de lo que falta */
+.logro-falta .logro-icono { filter: grayscale(1); opacity: .5; }
+.logro-falta .logro-nombre { opacity: .7; }
 
 /* --- Botella de agua ------------------------------------------------------- */
 .botella { width: 100%; height: 100%; display: block; overflow: visible; }
