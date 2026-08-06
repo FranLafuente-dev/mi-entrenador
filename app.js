@@ -1178,12 +1178,15 @@ async function procesarSemanasCerradas() {
               await guardarConfig({ escudos: conEscudoAnotado(mes, r.clave) });
               ofrecerDeshacer("Escudo usado", async () => {
                 await guardarConfig({ escudos: escudosAntes }, { queHacia: "el escudo" });
-                await setDoc(refs.semana(r.clave), { escudo: false, decidida: false }, { merge: true });
+                await escribir("el escudo", () =>
+                  setDoc(refs.semana(r.clave), { escudo: false, decidida: false }, { merge: true }));
                 refrescarVistaActual();
               });
               const marca = { clave: r.clave, escudo: true, decidida: true };
+              // El estado local se toca DESPUÉS de que la escritura resuelve: si
+              // falla, la semana no queda marcada como gastada en la memoria.
+              await escribir("el escudo", () => setDoc(refs.semana(r.clave), marca, { merge: true }));
               S.semanas.set(r.clave, { ...(guardada || {}), ...marca });
-              await setDoc(refs.semana(r.clave), marca, { merge: true });
               toast(sargento("escudoUsado"), "toast-alerta", 6000);
               reiniciar = true;
               break;
