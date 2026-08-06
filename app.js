@@ -749,11 +749,16 @@ async function alCambiarDatos() {
   const primeraVez = !S.cargado;
   S.cargado = true;
 
-  // Cualquier sesión de un día anterior se cierra sola antes de calcular nada,
-  // así la racha ya la ve como hecha y no como un día colgado.
-  if (primeraVez) await cerrarSesionesViejas();
-
-  await procesarSemanasCerradas();
+  /* Nada de lo que pase acá puede impedir que la app entre. Si el cierre
+     automático o el cálculo de semanas fallan, se anota y se sigue: es
+     preferible entrar con la racha desactualizada que quedarse en la carga. */
+  try {
+    if (primeraVez) await cerrarSesionesViejas();
+    await procesarSemanasCerradas();
+  } catch (e) {
+    console.error("arranque:", e);
+    anotarProblema(`fallo al preparar los datos: ${e?.message || e}`);
+  }
   if (primeraVez && (vistaActual === "carga" || vistaActual === "login")) {
     // Con una sesión abierta de hoy se entra DIRECTO al entrenamiento, al mismo
     // ejercicio y la misma serie. Sin pasar por el inicio ni pedir un toque.
@@ -1147,7 +1152,10 @@ async function procesarSemanasCerradas() {
           guardada.racha === resumen.racha;
         if (!sinCambios) {
           S.semanas.set(r.clave, { ...(guardada || {}), ...resumen, avisada: true });
-          await setDoc(refs.semana(r.clave), { ...resumen, avisada: true }, { merge: true });
+          // Por el envoltorio: esto corre en el arranque y una excepción acá
+          // dejaría la app sin entrar nunca.
+          await escribir(`el resumen de la semana ${r.clave}`,
+            () => setDoc(refs.semana(r.clave), { ...resumen, avisada: true }, { merge: true }));
         }
 
         if (!yaAvisada) {
