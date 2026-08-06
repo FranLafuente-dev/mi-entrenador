@@ -181,23 +181,10 @@ img { max-width: 100%; display: block; }
 .vista-inicio .insignia { width: clamp(52px, 8vh, 68px); height: auto; }
 .vista-inicio .racha-galones { gap: clamp(6px, 1.4vw, 12px); margin-bottom: 4px; }
 .vista-inicio .racha-galones svg { width: clamp(20px, 6vw, 30px); height: auto; }
-.vista-inicio .anillo { width: clamp(38px, 6vh, 52px); height: clamp(38px, 6vh, 52px); }
+.vista-inicio .botella-caja { width: clamp(40px, 6.5vh, 54px); height: clamp(48px, 8vh, 64px); }
 
-/* Los logros SIEMPRE se ven: son lo que motiva. En pantallas de teléfono se
-   pliegan dentro de la tarjeta de rango en vez de ocupar su propia fila, pero
-   nunca se ocultan. */
-#logros-en-racha:empty { display: none; }
-#logros-en-racha .logros-fila { margin-top: 8px; gap: 6px; }
-#logros-en-racha .logro {
-  font-size: 12px; padding: 4px 10px;
-  background: rgba(255,255,255,.10); border-color: rgba(255,255,255,.16);
-}
-.racha.r-base #logros-en-racha .logro {
-  background: var(--superficie2); border-color: var(--separador);
-}
-@media (max-height: 900px) {
-  .vista-inicio #logros-zona { display: none; }
-}
+/* Los logros SIEMPRE se ven: son lo que motiva. Tienen su propia fila y no se
+   ocultan en ninguna altura de pantalla. */
 
 /* Más bajas: se van los adornos y las líneas secundarias, en este orden.
    El galón grande es un duplicado decorativo de la fila de galones, y "Falta:
@@ -211,18 +198,43 @@ img { max-width: 100%; display: block; }
 }
 /* La insignia NUNCA se oculta: se achica lo mínimo y listo. Lo que se pliega
    es todo lo demás. */
-@media (max-height: 700px) {
+/* Todos los teléfonos entran acá: una tablet arranca en 1000 px de alto.
+   Sin esta compactación la tarjeta de rango queda clavada en su mínimo y se
+   recorta, porque el resto de las filas se come la pantalla. */
+@media (max-height: 960px) {
   .vista-inicio .fila-2 .tarjeta-nota { display: none; }
   .vista-inicio .tarjeta-peso .tarjeta-nota { display: none; }
   .vista-inicio .racha-extra { display: none; }
   .vista-inicio .racha-semana { font-size: 13px; }
+  .vista-inicio .racha-num { margin: 1px 0 6px; }
+  .vista-inicio .racha-alerta,
+  .vista-inicio .racha-congelada { font-size: 11px; margin-top: 6px; }
   .vista-inicio .insignia { width: 52px; height: 66px; }
   .vista-inicio .racha { padding: 12px 16px; gap: 12px; }
-  .vista-inicio #logros-en-racha .logro { font-size: 11px; padding: 3px 8px; }
+  .vista-inicio .fila-2 .btn-medio { min-height: 40px; font-size: 14px; }
+  /* Los logros se compactan, pero no se van */
+  .vista-inicio .logro { font-size: 11px; padding: 3px 8px; }
+  .vista-inicio .logros-proximo { padding: 6px 12px; }
+  .vista-inicio .lp-rango { font-size: 14px; }
+  .vista-inicio .lp-falta { font-size: 11px; }
+  .vista-inicio .lp-barra { height: 5px; margin: 4px 0 2px; }
+  .vista-inicio .logros-fila { margin-top: 6px; gap: 5px; }
+  .vista-inicio #logros-zona { margin-top: 10px; }
 }
 /* Al límite: la tarjeta de peso se reduce a una sola línea */
-@media (max-height: 620px) {
+@media (max-height: 700px) {
   .vista-inicio .tarjeta-peso .peso-fila:nth-child(2) { display: none; }
+  .vista-inicio .logro-nombre { display: none; }   /* quedan ícono y contador */
+  .vista-inicio .logro { padding: 4px 10px; }
+  .vista-inicio .racha-rango { font-size: 15px; }
+  .vista-inicio .racha-galones svg { width: 20px; height: 17px; }
+  .vista-inicio .frase { line-height: 1.25; }
+  .vista-inicio .lp-etiqueta { display: none; }
+  /* Los espaciados son lo primero que se comprime: 5 huecos de 4 px menos
+     liberan 20 px sin tocar ningún contenido. */
+  .vista-inicio { gap: 5px; padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 86px); }
+  .vista-inicio .tarjeta { padding: 11px 14px; }
+  .vista-inicio .racha { padding: 10px 14px; }
 }
 
 /* Encabezado que se contrae */
@@ -433,32 +445,90 @@ img { max-width: 100%; display: block; }
 .peso-fila { display: flex; justify-content: space-between; align-items: baseline; padding: 4px 0; }
 .peso-fila .lapiz { color: var(--texto2); font-size: 15px; margin-left: 8px; }
 
-/* Logros */
-#logros-zona { margin-top: 24px; }
-.logros-fila { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-.logro {
+/* ============================================================================
+   LOGROS — con color, con animación, y mostrando lo que falta
+   ========================================================================== */
+#logros-zona { margin-top: 16px; }
+
+.logros-proximo {
   background: var(--superficie); border: 1px solid var(--separador);
-  border-radius: 999px; padding: 8px 16px; font-size: 13px; font-weight: 600;
+  border-radius: var(--r-boton); padding: 10px 14px;
+  box-shadow: var(--sombra-contacto);
+}
+.lp-texto { display: flex; align-items: baseline; gap: 8px; }
+.lp-falta { margin-left: auto; white-space: nowrap; }
+.lp-etiqueta {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.6px;
+  text-transform: uppercase; color: var(--texto2);
+}
+.lp-rango { font-size: 15px; font-weight: 700; letter-spacing: -0.2px; }
+.lp-barra {
+  height: 6px; border-radius: 999px; background: var(--separador);
+  margin: 6px 0 0; overflow: hidden;
+}
+.lp-barra i {
+  display: block; height: 100%; border-radius: 999px;
+  background: linear-gradient(90deg, var(--verde), var(--celeste));
+  animation: lp-crece 900ms var(--curva-entrada) both;
+}
+@keyframes lp-crece { from { width: 0 !important; } }
+.lp-falta { font-size: 12px; color: var(--texto2); font-weight: 600; }
+
+.logros-fila { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.logro {
+  display: inline-flex; align-items: center; gap: 5px;
+  border-radius: 999px; padding: 6px 12px; font-size: 12px; font-weight: 600;
+  border: 1px solid var(--separador); background: var(--superficie);
+  animation: logro-entra var(--t-rebote) var(--curva-rebote) both;
+}
+@keyframes logro-entra { from { opacity: 0; transform: scale(0.8); } }
+.logro-icono { font-size: 13px; line-height: 1; }
+.logro-n { font-variant-numeric: tabular-nums; }
+/* Conseguido: color y un brillo lento que lo hace notar */
+.logro-ok {
+  background: color-mix(in srgb, var(--amarillo) 22%, var(--superficie));
+  border-color: color-mix(in srgb, var(--amarillo) 55%, transparent);
+  color: var(--texto);
+}
+.logro-ok .logro-n { color: var(--texto); }
+/* Pendiente: apagado, pero visible para saber hacia dónde voy */
+.logro-falta { opacity: .45; }
+.logro-falta .logro-icono { filter: grayscale(1); }
+
+/* --- Botella de agua ------------------------------------------------------- */
+.botella { width: 100%; height: 100%; display: block; overflow: visible; }
+.bot-vidrio, .bot-cuello, .bot-tapa {
+  fill: none; stroke: var(--texto2); stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round; opacity: .55;
+}
+.bot-tapa { fill: var(--texto2); stroke: none; opacity: .45; }
+.bot-agua { fill: var(--celeste); }
+.bot-lleno .bot-agua { fill: var(--verde); }
+.bot-lleno .bot-vidrio { stroke: var(--verde); opacity: .9; }
+
+/* La ola corre en bucle: el trazo mide 120 y se desplaza 40, así empalma */
+.bot-ola { animation: bot-ola 2.6s linear infinite; }
+@keyframes bot-ola { to { transform: translateX(40px); } }
+/* El vaivén corre una sola vez cada vez que se dibuja la botella */
+.bot-vaiven { transform-origin: 20px 40px; animation: bot-vaiven 1.6s var(--curva) 1; }
+@keyframes bot-vaiven {
+  0% { transform: rotate(-7deg); }
+  35% { transform: rotate(4deg); }
+  60% { transform: rotate(-2deg); }
+  80% { transform: rotate(1deg); }
+  100% { transform: rotate(0deg); }
+}
+/* El nivel sube animado cuando cambia */
+.bot-nivel { transition: transform 700ms var(--curva-entrada); }
+
+.botella-caja { width: 52px; height: 62px; align-self: flex-end; flex: none; }
+.agua-detalle .botella-caja { width: 120px; height: 150px; margin: 8px auto 16px; align-self: center; }
+
+@media (prefers-reduced-motion: reduce) {
+  .bot-ola, .bot-vaiven { animation: none; }
 }
 
-/* --- Anillo de progreso ---------------------------------------------------- */
-.anillo { position: relative; width: 52px; height: 52px; align-self: flex-end; }
-/* El giro es para que el anillo arranque arriba. NO alcanza a la tilde, que
-   tiene que quedar derecha. */
-.anillo > svg:not(.tilde-svg) { width: 100%; height: 100%; transform: rotate(-90deg); }
-.anillo .pista { fill: none; stroke: var(--separador); stroke-width: 5; }
-.anillo .valor {
-  fill: none; stroke: var(--verde); stroke-width: 5; stroke-linecap: round;
-  transition: stroke-dashoffset 600ms var(--curva-entrada);
-}
-.anillo.pulso { animation: anillo-pulso var(--t-rebote) var(--curva-rebote); }
-@keyframes anillo-pulso { 50% { transform: scale(1.12); } }
-.anillo .tilde-svg { position: absolute; inset: 14px; transform: none; }
-.anillo .tilde-svg path {
-  fill: none; stroke: var(--verde); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round;
-  stroke-dasharray: 30; stroke-dashoffset: 30;
-  animation: dibujar-tilde 300ms 100ms var(--curva) forwards;
-}
+/* La tilde dibujada se sigue usando en las series marcadas */
 @keyframes dibujar-tilde { to { stroke-dashoffset: 0; } }
 
 /* --- Tabbar flotante ------------------------------------------------------- */
@@ -549,8 +619,6 @@ img { max-width: 100%; display: block; }
 
 /* --- Agua ------------------------------------------------------------------ */
 .agua-detalle { text-align: center; }
-.agua-detalle .anillo { width: 120px; height: 120px; margin: 8px auto 16px; align-self: center; }
-.agua-detalle .anillo .pista, .agua-detalle .anillo .valor { stroke-width: 7; }
 .agua-cifra { font-size: 34px; font-weight: 700; letter-spacing: -1px; font-variant-numeric: tabular-nums; }
 .agua-cifra small { font-size: 15px; font-weight: 500; color: var(--texto2); letter-spacing: 0; }
 .agua-botones { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 16px; }
@@ -963,6 +1031,8 @@ canvas.grafico-mini { width: 100%; height: 130px; background: var(--superficie);
 .esc-punto.sel { background: var(--texto); color: var(--fondo); border-color: var(--texto); }
 .ficha-escala.vacia .esc-puntos { opacity: .45; }
 .ficha-acciones { display: grid; gap: 8px; margin-top: 24px; }
+.ficha-acciones .btn-texto { width: 100%; }
+#fic-correcciones { display: grid; gap: 8px; animation: vista-entra var(--t) var(--curva-entrada); }
 
 /* Foto: cámara y galería, dos caminos que valen igual */
 .foto-botones { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }

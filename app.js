@@ -322,16 +322,43 @@ function svgInsignia(clase) {
       <rect class="ins-brillo" x="-14" y="0" width="18" height="84"/>
     </svg>`;
 }
-function svgAnillo(pct, { tilde = false } = {}) {
-  const r = 45, c = 2 * Math.PI * r;
-  const off = c * (1 - Math.min(1, Math.max(0, pct)));
+/* ==========================================================================
+   BOTELLA DE AGUA — se llena con lo que llevo tomado y el líquido se mueve
+   --------------------------------------------------------------------------
+   Reemplaza al anillo con tilde, que en iOS quedaba mal puesto. El interior
+   se recorta con un clipPath propio (id único por si hay dos botellas en la
+   misma pantalla) y el líquido tiene tres movimientos superpuestos: el nivel
+   que sube, una ola que corre en bucle y un vaivén de un solo tiro cada vez
+   que se dibuja, o sea al abrir la app y al volver al inicio.
+   ========================================================================== */
+let contadorBotellas = 0;
+
+function svgBotella(pct, { lleno = false } = {}) {
+  const p = Math.max(0, Math.min(1, pct || 0));
+  const id = `bot${++contadorBotellas}`;
+  const ARRIBA = 18, ABAJO = 60;              // interior útil de la botella
+  const nivel = ABAJO - (ABAJO - ARRIBA) * p; // dónde queda la superficie
+
   return `
-    <svg viewBox="0 0 100 100">
-      <circle class="pista" cx="50" cy="50" r="${r}"/>
-      <circle class="valor" cx="50" cy="50" r="${r}"
-        stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}"/>
-    </svg>
-    ${tilde ? `<svg class="tilde-svg" viewBox="0 0 24 24"><path d="M4 12.5 10 18 20 6"/></svg>` : ""}`;
+    <svg class="botella ${lleno ? "bot-lleno" : ""}" viewBox="0 0 40 66" aria-hidden="true">
+      <defs>
+        <clipPath id="${id}">
+          <path d="M11 16h18a3 3 0 0 1 3 3v39a3 3 0 0 1-3 3H11a3 3 0 0 1-3-3V19a3 3 0 0 1 3-3z"/>
+        </clipPath>
+      </defs>
+      <g clip-path="url(#${id})">
+        <g class="bot-vaiven">
+          <g class="bot-nivel" style="transform: translateY(${nivel.toFixed(1)}px)">
+            <g class="bot-ola">
+              <path class="bot-agua" d="M-40 4 q10 -5 20 0 t20 0 t20 0 t20 0 t20 0 t20 0 V62 H-40 Z"/>
+            </g>
+          </g>
+        </g>
+      </g>
+      <path class="bot-vidrio" d="M11 16h18a3 3 0 0 1 3 3v39a3 3 0 0 1-3 3H11a3 3 0 0 1-3-3V19a3 3 0 0 1 3-3z"/>
+      <path class="bot-cuello" d="M16 16v-5h8v5"/>
+      <rect class="bot-tapa" x="14.5" y="4" width="11" height="6" rx="2"/>
+    </svg>`;
 }
 
 /* ==========================================================================
@@ -1672,7 +1699,7 @@ function renderInicio() {
 
   let tTitular = "", tFrase = "";
   if (entrenado) {
-    tTitular = "Ya entrenaste 💪";
+    tTitular = "Ya entrenaste hoy 💪";
     tFrase = sargento("yaEntreno", vars);
   } else if (estado === "causa-mayor") {
     tTitular = "Día cubierto";
@@ -1710,8 +1737,8 @@ function renderInicio() {
   } else if (entrenado) {
     tEntreno.innerHTML = `
       <div><div class="tarjeta-titulo">Entreno hoy</div>
-      <div class="tarjeta-valor">Completado</div>
-      <div class="tarjeta-nota">${esc(resumenCortoSesion(reg))}${sinFoto ? " · falta la foto" : ""}</div></div>
+      <div class="tarjeta-valor">Ya entrenaste hoy</div>
+      <div class="tarjeta-nota">${esc(resumenCortoSesion(reg))}</div></div>
       <div class="tarjeta-estado">✅</div>`;
     tEntreno.onclick = () => abrirFicha(hoy, tEntreno);
   } else if (plan.tipo === "entreno" && estado !== "causa-mayor") {
@@ -1750,7 +1777,7 @@ function renderInicio() {
     <div><div class="tarjeta-titulo">Agua hoy</div>
     <div class="tarjeta-valor num">${fmtLitros(ml)} / ${fmtLitros(objetivo)} L</div>
     <div class="tarjeta-nota">${cumplida ? "Objetivo cumplido" : "Tocá para registrar"}</div></div>
-    <div class="anillo ${cumplida ? "pulso" : ""}">${svgAnillo(ml / objetivo, { tilde: cumplida })}</div>`;
+    <div class="botella-caja">${svgBotella(ml / objetivo, { lleno: cumplida })}</div>`;
   tAgua.onclick = () => hojaAgua(tAgua);
 
   /* --- Tarjeta de peso --- */
@@ -1827,7 +1854,6 @@ function renderRacha(racha, semanaActual) {
         ${semanaActual.caminatas > 0 ? `<div class="racha-extra">+ caminata esta semana</div>` : ""}
         ${marca ? `<div class="racha-marca">${marca.replace(/^ /, "")}</div>` : ""}
         ${falta}${alerta}
-        <div id="logros-en-racha"></div>
       </div>
       <div class="racha-insignia">${svgInsignia(clase)}</div>
     </button>`;
@@ -1868,7 +1894,7 @@ function renderTarjetaPeso() {
     ${resumen ? `<div class="tarjeta-nota num">${resumen}</div>` : ""}`;
   t.onclick = (ev) => {
     if (ev.target.closest(".lapiz")) hojaObjetivoPeso();
-    else irA("progreso");
+    else irA("peso");        // el peso corporal, no el de las máquinas
   };
 }
 
@@ -1889,8 +1915,14 @@ function hojaObjetivoPeso() {
   };
 }
 
-function renderLogros() {
-  const zona = $("#logros-zona");
+/* ==========================================================================
+   LOGROS — lo que tengo y, sobre todo, hacia dónde voy
+   --------------------------------------------------------------------------
+   Los conseguidos van con color; los que faltan, apagados y con la condición
+   que los desbloquea. Arriba, cuánto falta para el próximo rango, que es el
+   objetivo grande.
+   ========================================================================== */
+function contarLogros() {
   const { cerradas } = calcularRacha();
   const menciones = cerradas.filter((s) => s.mencionHonor).length;
   let perfectos = 0, hierros = 0, corrida = 0, corridaLimpia = 0;
@@ -1899,20 +1931,68 @@ function renderLogros() {
       corrida++;
       corridaLimpia = (s.recuperadas === 0 && !s.escudo) ? corridaLimpia + 1 : 0;
       if (corrida % 4 === 0) { perfectos++; if (corridaLimpia >= 4) hierros++; }
-    } else { corrida = 0; corridaLimpia = 0; }
+    } else if (!s.neutra) { corrida = 0; corridaLimpia = 0; }
   }
-  const chips = [];
-  if (menciones) chips.push(`🏅 Mención de honor × ${menciones}`);
-  if (perfectos) chips.push(`Mes perfecto × ${perfectos}`);
-  if (hierros) chips.push(`Mes de hierro × ${hierros}`);
+  return { menciones, perfectos, hierros, corrida };
+}
 
-  const fila = chips.map((c) => `<span class="logro">${esc(c)}</span>`).join("");
-  zona.innerHTML = chips.length
-    ? `<div class="etiqueta">Logros</div><div class="logros-fila">${fila}</div>` : "";
-  // Copia compacta que la hoja de estilos usa en pantallas bajas, plegándola
-  // dentro de la tarjeta de racha para que el inicio siga entrando entero.
-  const dentro = $("#logros-en-racha");
-  if (dentro) dentro.innerHTML = chips.length ? `<div class="logros-fila">${fila}</div>` : "";
+function renderLogros() {
+  const zona = $("#logros-zona");
+  if (!zona) return;
+  const { racha } = calcularRacha();
+  const { menciones, perfectos, hierros, corrida } = contarLogros();
+
+  /* Próximo rango: cuántas semanas faltan y cuánto del camino llevo. */
+  const idx = rangoIndice(racha);
+  const siguiente = RANGOS[idx + 1];
+  const actual = RANGOS[idx];
+  let barra = "";
+  if (siguiente) {
+    const desde = actual.semanas, hasta = siguiente.semanas;
+    const faltan = hasta - racha;
+    const pct = Math.max(0, Math.min(100, ((racha - desde) / (hasta - desde)) * 100));
+    barra = `
+      <div class="logros-proximo">
+        <div class="lp-texto">
+          <span class="lp-etiqueta">Próximo</span>
+          <b class="lp-rango">${esc(siguiente.nombre)}</b>
+          <span class="lp-falta num">${faltan === 1 ? "falta 1 semana" : `faltan ${faltan} semanas`}</span>
+        </div>
+        <div class="lp-barra"><i style="width:${pct.toFixed(0)}%"></i></div>
+      </div>`;
+  } else {
+    barra = `<div class="logros-proximo">
+      <div class="lp-texto"><b class="lp-rango">${esc(actual.nombre)}</b>
+      <span class="lp-etiqueta">el rango más alto</span></div></div>`;
+  }
+
+  /* Los tres logros, conseguidos o pendientes con su condición. */
+  const defs = [
+    { icono: "🏅", nombre: "Mención de honor", n: menciones,
+      falta: "Completá la semana y sumá una caminata en un día de descanso." },
+    { icono: "🔥", nombre: "Mes perfecto", n: perfectos,
+      falta: `Cuatro semanas completas seguidas. Llevás ${corrida}.` },
+    { icono: "💪", nombre: "Mes de hierro", n: hierros,
+      falta: "Cuatro semanas completas seguidas, sin recuperar ni usar escudo." },
+  ];
+
+  const fila = defs.map((d, i) => `
+    <span class="logro ${d.n ? "logro-ok" : "logro-falta"}" style="animation-delay:${i * 70}ms"
+      title="${esc(d.n ? `Conseguido ${d.n} ${d.n === 1 ? "vez" : "veces"}` : d.falta)}">
+      <span class="logro-icono">${d.icono}</span>
+      <span class="logro-nombre">${esc(d.nombre)}</span>
+      ${d.n ? `<b class="logro-n num">×${d.n}</b>` : ""}
+    </span>`).join("");
+
+  zona.innerHTML = `${barra}<div class="logros-fila">${fila}</div>`;
+  // Tocar un logro cuenta qué es y qué falta para conseguirlo.
+  zona.querySelectorAll(".logro").forEach((n, i) => {
+    n.onclick = () => {
+      const d = defs[i];
+      toast(d.n ? `${d.nombre}: conseguido ${d.n} ${d.n === 1 ? "vez" : "veces"}.` : `${d.nombre}: ${d.falta}`,
+        d.n ? "toast-record" : "", 6000);
+    };
+  });
 }
 
 function proximasSesiones(semanaActual) {
@@ -1972,27 +2052,31 @@ function hojaMas() {
     items.push({ id: "mas-foto", titulo: "Agregar la foto de hoy", dato: "El día quedó sin foto" });
   }
 
-  items.push({ id: "mas-agua", titulo: "Registrar agua" });
-  items.push({ id: "mas-peso", titulo: "Registrar peso" });
+  /* El agua se carga desde el inicio y el peso desde su pestaña: acá quedan
+     solo los entrenamientos. Si hay una sola opción, se va directo a ella y
+     nos ahorramos una pantalla intermedia. */
+  const acciones = {
+    "mas-entrenar": () => abrirRegistroEntrenamiento(),
+    "mas-continuar": () => abrirRegistroEntrenamiento(),
+    "mas-igual": () => abrirRegistroEntrenamiento({ forzarNueva: true }),
+    "mas-foto": () => hojaAgregarFoto(hoy),
+    "mas-recuperar": () => abrirRegistroEntrenamiento({
+      rutinaId: pendientes[0].rutinaId, esRecuperacion: true, fechaOriginal: pendientes[0].fecha,
+    }),
+  };
+  if (items.length === 1) { acciones[items[0].id](); return; }
 
   abrirHoja(`
-    <h3>Registrar</h3>
+    <h3>Registrar entrenamiento</h3>
     <div class="accion-lista">
       ${items.map((i) => `<button class="accion-item" id="${i.id}">
         <span>${esc(i.titulo)}${i.dato ? `<span class="dato">${esc(i.dato)}</span>` : ""}</span></button>`).join("")}
     </div>`);
 
-  const on = (id, fn) => { const b = $(`#${id}`); if (b) b.onclick = () => { cerrarHoja(true); fn(); }; };
-  on("mas-entrenar", () => abrirRegistroEntrenamiento());
-  on("mas-continuar", () => abrirRegistroEntrenamiento());
-  on("mas-igual", () => abrirRegistroEntrenamiento({ forzarNueva: true }));
-  on("mas-foto", () => hojaAgregarFoto(hoy));
-  on("mas-recuperar", () => abrirRegistroEntrenamiento({
-    rutinaId: pendientes[0].rutinaId, esRecuperacion: true, fechaOriginal: pendientes[0].fecha,
-  }));
-  on("mas-agua", () => hojaAgua());
-  on("mas-caminata", () => hojaCaminata());
-  on("mas-peso", () => hojaPesaje());
+  for (const [id, fn] of Object.entries(acciones)) {
+    const b = $(`#${id}`);
+    if (b) b.onclick = () => { cerrarHoja(true); fn(); };
+  }
 }
 
 /* ==========================================================================
@@ -2014,7 +2098,7 @@ function hojaAgua(desde) {
     const html = `
       <h3>Agua de hoy</h3>
       <div class="agua-detalle">
-        <div class="anillo ${cumplida ? "pulso" : ""}">${svgAnillo(ml / objetivo, { tilde: cumplida })}</div>
+        <div class="botella-caja">${svgBotella(ml / objetivo, { lleno: cumplida })}</div>
         <div class="agua-cifra num" id="agua-cifra" data-valor="${ml / 1000}">${fmtLitros(ml)}</div>
         <small class="texto-2">de ${fmtLitros(objetivo)} L
           <button id="agua-lapiz-obj" class="lapiz-btn" aria-label="Editar el objetivo">✏️</button></small>
@@ -2692,9 +2776,56 @@ function abrirRegistroEntrenamiento(opts = {}) {
 
   const fecha = opts.fecha || hoy;
   const plan = planDelDia(fecha);
+
+  /* En un día de descanso lo primero que corresponde ofrecer es la caminata;
+     entrenar es la excepción y va después, como adelanto de otra sesión. */
+  if (plan.tipo === "descanso" && fecha === hoy && !opts.rutinaId && !opts.forzarNueva) {
+    hojaDiaDeDescanso();
+    return;
+  }
+
   const rutinaId = opts.rutinaId || plan.rutina ||
     (S.dias.get(fecha)?.rutinaId) || "musculacion";
   pasoElegirRutina({ ...opts, fecha, rutinaId });
+}
+
+/* Día de descanso: la caminata arriba, adelantar sesiones abajo. */
+function hojaDiaDeDescanso() {
+  const hoy = hoyISO();
+  const reg = S.dias.get(hoy);
+  const otras = sesionesCubribles().filter((o) => o.clave !== "suelta");
+
+  abrirHoja(`
+    <h3>Hoy es día de descanso</h3>
+    <p class="texto-2">No toca entrenar. Una caminata suma para la mención de
+    honor de la semana.</p>
+    <div class="hoja-acciones">
+      <button id="dd-caminar" class="btn btn-rojo btn-gigante">
+        ${reg?.caminata?.minutos ? "Editar la caminata" : "Registrar una caminata"}</button>
+    </div>
+    ${otras.length ? `
+      <div class="paso-indicador">O adelantar una sesión</div>
+      <div class="accion-lista">
+        ${otras.map((o) => `<button class="accion-item" data-cubre="${o.clave}">
+          <span>${esc(o.titulo)}<span class="dato">${esc(o.dato)}</span></span></button>`).join("")}
+      </div>` : ""}
+    <div class="registro-enlaces">
+      <button id="dd-suelto" class="btn btn-texto">Entrenar igual, sin cubrir ninguna sesión</button>
+    </div>`);
+
+  $("#dd-caminar").onclick = () => hojaCaminata();
+  $("#dd-suelto").onclick = () => abrirRegistroEntrenamiento({ forzarNueva: true, rutinaId: "musculacion" });
+  $$("#hoja-contenido [data-cubre]").forEach((b) => {
+    b.onclick = () => {
+      const o = sesionesCubribles().find((x) => x.clave === b.dataset.cubre);
+      if (!o) return;
+      pasoElegirRutina({
+        fecha: o.cubre, rutinaId: o.rutinaId,
+        esRecuperacion: !!o.esRecuperacion, fechaOriginal: o.esRecuperacion ? o.cubre : null,
+        adelanta: !!o.adelanta,
+      });
+    };
+  });
 }
 
 /* Qué sesiones se pueden cubrir hoy: la de hoy, las pendientes de la semana y
@@ -4482,13 +4613,22 @@ function abrirFicha(fecha, desdeEl) {
     ${reg.tieneFoto
       ? `<div id="ficha-foto" class="dato">Cargando…</div>`
       : `<p class="vacio-direccion">Este día quedó sin foto.</p>`}
+    <!-- Sesión confirmada al terminar: no se ofrece corregir nada. Las
+         acciones quedan detrás de un enlace discreto, por si algo salió mal. -->
     <div class="ficha-acciones">
-      <button id="fic-series" class="btn btn-borde btn-grande">Corregir pesos y repeticiones</button>
-      <button id="fic-parte" class="btn btn-borde btn-grande">Completar hambre, cansancio y comentario</button>
-      ${reg.tieneFoto ? "" : `<button id="fic-foto" class="btn btn-borde btn-grande">Agregar la foto</button>`}
+      <button id="fic-abrir-correcciones" class="btn btn-texto">¿Cargaste algo mal?</button>
+      <div id="fic-correcciones" class="oculta">
+        <button id="fic-series" class="btn btn-borde btn-grande">Corregir pesos y repeticiones</button>
+        <button id="fic-parte" class="btn btn-borde btn-grande">Completar hambre, cansancio y comentario</button>
+        ${reg.tieneFoto ? "" : `<button id="fic-foto" class="btn btn-borde btn-grande">Agregar la foto</button>`}
+      </div>
     </div>
   `, { desde: desdeEl });
 
+  $("#fic-abrir-correcciones").onclick = (ev) => {
+    $("#fic-correcciones").classList.remove("oculta");
+    ev.currentTarget.classList.add("oculta");
+  };
   $("#fic-series").onclick = () => hojaEditarSeries(fecha);
   $("#fic-parte").onclick = () => hojaCompletarCierre(fecha);
   const bFoto = $("#fic-foto");
