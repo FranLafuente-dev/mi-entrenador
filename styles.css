@@ -138,15 +138,16 @@ img { max-width: 100%; display: block; }
    Nunca se achican por debajo de lo legible la racha, el entreno ni el agua.
    ========================================================================== */
 .vista-inicio {
-  height: 100dvh;
+  height: calc(100dvh - var(--alto-barra-sesion, 0px));
   min-height: 0;
   overflow: hidden;
   display: grid;
   grid-template-rows:
     auto                                  /* fecha + engranaje */
     auto                                  /* titular + frase */
-    minmax(130px, 1fr)                    /* racha: la fila flexible */
+    minmax(118px, 1fr)                    /* racha: la fila flexible */
     auto                                  /* entreno | agua */
+    auto                                  /* botón de acción */
     auto                                  /* peso */
     auto;                                 /* logros */
   gap: clamp(6px, 1.4vh, 12px);
@@ -170,7 +171,7 @@ img { max-width: 100%; display: block; }
 .vista-inicio .titular { font-size: clamp(24px, 4.2vh, 34px); }
 .vista-inicio .frase { font-size: clamp(13px, 1.9vh, 17px); margin-top: 2px; }
 .vista-inicio .fila-2 { margin-top: 0; gap: clamp(8px, 1.4vh, 12px); }
-.vista-inicio .fila-2 .tarjeta { min-height: clamp(96px, 14vh, 150px); }
+.vista-inicio .fila-2 .tarjeta { min-height: clamp(82px, 11vh, 118px); }
 .vista-inicio .tarjeta { padding: clamp(12px, 2vh, 20px); }
 .vista-inicio .tarjeta-peso { margin-top: 0; }
 .vista-inicio #racha-tarjeta { margin-top: 0; min-height: 0; }
@@ -202,6 +203,19 @@ img { max-width: 100%; display: block; }
    Sin esta compactación la tarjeta de rango queda clavada en su mínimo y se
    recorta, porque el resto de las filas se come la pantalla. */
 @media (max-height: 960px) {
+  /* El botón de acción y sus enlaces son lo primero que se compacta */
+  .vista-inicio .btn-accion { min-height: 48px; font-size: 15px; }
+  .vista-inicio .accion-secundarias .btn-texto { min-height: 30px; font-size: 12px; }
+  .vista-inicio { gap: clamp(5px, 1vh, 10px); }
+  .vista-inicio .racha { padding: 12px 16px; }
+  .vista-inicio .racha-num { margin: 0 0 5px; }
+  .vista-inicio .racha-rango { font-size: clamp(15px, 2vh, 18px); }
+  .vista-inicio .racha-alerta,
+  .vista-inicio .racha-congelada { font-size: 11px; margin-top: 4px; }
+  .vista-inicio .insignia { width: clamp(50px, 6.6vh, 58px); }
+  .vista-inicio .tarjeta { padding: 12px 14px; }
+  .vista-inicio .fila-2 .tarjeta { min-height: clamp(76px, 9.5vh, 108px); }
+  .vista-inicio .tg-manana { font-size: 10.5px; line-height: 1.25; }
   .vista-inicio .fila-2 .tarjeta-nota { display: none; }
   .vista-inicio .tarjeta-peso .tarjeta-nota { display: none; }
   .vista-inicio .racha-extra { display: none; }
@@ -230,11 +244,40 @@ img { max-width: 100%; display: block; }
   .vista-inicio .racha-galones svg { width: 20px; height: 17px; }
   .vista-inicio .frase { line-height: 1.25; }
   .vista-inicio .lp-etiqueta { display: none; }
-  /* Los espaciados son lo primero que se comprime: 5 huecos de 4 px menos
-     liberan 20 px sin tocar ningún contenido. */
-  .vista-inicio { gap: 5px; padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 86px); }
-  .vista-inicio .tarjeta { padding: 11px 14px; }
-  .vista-inicio .racha { padding: 10px 14px; }
+  /* Los espaciados son lo primero que se comprime: seis huecos más chicos y
+     menos margen inferior liberan casi 40 px sin tocar ningún contenido. */
+  .vista-inicio { gap: 4px; padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 78px); }
+  .vista-inicio .tarjeta { padding: 10px 12px; }
+  .vista-inicio .racha { padding: 10px 12px; }
+  .vista-inicio .inicio-cabecera { min-height: 32px; }
+  .vista-inicio .inicio-cabecera .btn-icono { min-height: 34px; min-width: 34px; }
+  /* La frase del sargento a una línea */
+  .vista-inicio .frase { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .vista-inicio .btn-accion { min-height: 44px; font-size: 14px; }
+  .vista-inicio .accion-secundarias .btn-texto { min-height: 24px; font-size: 12px; }
+  .vista-inicio .fila-2 .tarjeta { min-height: 0; }
+  .vista-inicio .tg-manana { font-size: 10px; padding-top: 4px; }
+  .vista-inicio #racha-tarjeta { min-height: 0; }
+  .vista-inicio .logros-proximo { padding: 5px 10px; }
+  .vista-inicio #logros-zona { margin-top: 4px; }
+  .vista-inicio .logros-fila { margin-top: 4px; }
+}
+
+/* Pantallas muy bajas: se va la línea de "mañana toca", que es lo único
+   informativo puro que queda. */
+@media (max-height: 620px) {
+  .vista-inicio .tg-manana { display: none; }
+}
+
+/* Con el banner de sesión arriba hay 54 px menos: se compacta todavía más.
+   Es una situación transitoria, en medio de un entrenamiento. */
+body.con-barra-sesion .vista-inicio .tg-manana,
+body.con-barra-sesion .vista-inicio .racha-alerta,
+body.con-barra-sesion .vista-inicio .racha-falta { display: none; }
+body.con-barra-sesion .vista-inicio .logros-fila { display: none; }
+body.con-barra-sesion .vista-inicio .racha-num { margin-bottom: 4px; }
+@media (max-height: 700px) {
+  body.con-barra-sesion .vista-inicio .frase { display: none; }
 }
 
 /* Encabezado que se contrae */
@@ -344,6 +387,35 @@ img { max-width: 100%; display: block; }
 .fila-2 .tarjeta { min-height: 150px; display: flex; flex-direction: column; justify-content: space-between; }
 
 .tarjeta-titulo { font-size: 13px; font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; color: var(--texto2); }
+
+/* --- Los dos toggles del inicio: compactos, con el estado a la vista ------- */
+.tg-fila { display: flex; align-items: flex-start; gap: 8px; }
+.tg-datos { flex: 1; min-width: 0; }
+.tg-manana {
+  font-size: 11px; line-height: 1.3; color: var(--texto2);
+  margin-top: auto; padding-top: 6px;
+}
+.tg-manana b { color: var(--texto); font-weight: 700; }
+
+/* --- Botón de acción del inicio ------------------------------------------- */
+.accion-entreno { display: grid; gap: 2px; }
+.btn-accion {
+  width: 100%; min-height: 54px; font-size: 16px; font-weight: 700;
+  padding: 0 16px; line-height: 1.2;
+  box-shadow: var(--sombra-contacto), var(--sombra-ambiental);
+}
+.btn-verde { background: var(--verde); color: #04220d; }
+.accion-cumplida { display: flex; align-items: stretch; gap: 8px; }
+.accion-cumplida .btn-accion { flex: 1; }
+.btn-lapiz {
+  flex: none; width: 48px; border-radius: var(--r-boton);
+  background: var(--superficie); border: 1px solid var(--separador);
+  font-size: 17px; display: flex; align-items: center; justify-content: center;
+  transition: transform 120ms ease;
+}
+.btn-lapiz:active { transform: scale(0.94); }
+.accion-secundarias { display: flex; justify-content: center; gap: 16px; }
+.accion-secundarias .btn-texto { font-size: 13px; min-height: 36px; padding: 0 4px; }
 .tarjeta-valor { font-size: 22px; font-weight: 700; letter-spacing: -0.2px; margin-top: 4px; }
 .tarjeta-nota { font-size: 13px; color: var(--texto2); margin-top: 4px; line-height: 1.35; }
 .tarjeta-estado { font-size: 26px; align-self: flex-end; line-height: 1; }
@@ -511,6 +583,9 @@ img { max-width: 100%; display: block; }
 @keyframes bot-ola { to { transform: translateX(40px); } }
 /* El vaivén corre una sola vez cada vez que se dibuja la botella */
 .bot-vaiven { transform-origin: 20px 40px; animation: bot-vaiven 1.6s var(--curva) 1; }
+/* Objetivo cumplido: el agua se queda quieta. El movimiento es el que invita a
+   tomar; una vez lleno no hay nada que pedir. */
+.bot-lleno .bot-ola, .bot-lleno .bot-vaiven { animation: none; }
 @keyframes bot-vaiven {
   0% { transform: rotate(-7deg); }
   35% { transform: rotate(4deg); }
@@ -1149,8 +1224,10 @@ body:has(#vista-entreno:not(.oculta)) .barra-descanso {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .bs-flecha { font-size: 18px; opacity: .9; }
-/* Empuja el contenido, no lo tapa */
-body.con-barra-sesion #lienzo { padding-top: 58px; }
+/* Empuja el contenido, no lo tapa. La altura real la mide el JS y la deja en
+   --alto-barra-sesion, para que el inicio (que mide 100dvh exactos) se
+   descuente esos píxeles y no se le caigan las filas de abajo. */
+body.con-barra-sesion #lienzo { padding-top: var(--alto-barra-sesion, 58px); }
 
 /* --- Deshacer -------------------------------------------------------------- */
 .deshacer {

@@ -350,7 +350,10 @@ function svgBotella(pct, { lleno = false } = {}) {
         <g class="bot-vaiven">
           <g class="bot-nivel" style="transform: translateY(${nivel.toFixed(1)}px)">
             <g class="bot-ola">
-              <path class="bot-agua" d="M-40 4 q10 -5 20 0 t20 0 t20 0 t20 0 t20 0 t20 0 V62 H-40 Z"/>
+              <!-- Lleno: superficie plana y quieta. Sin llenar: ola en bucle. -->
+              <path class="bot-agua" d="${lleno
+                ? "M-40 2 H80 V62 H-40 Z"
+                : "M-40 4 q10 -5 20 0 t20 0 t20 0 t20 0 t20 0 t20 0 V62 H-40 Z"}"/>
             </g>
           </g>
         </g>
@@ -1268,7 +1271,10 @@ function pintarBarraSesion() {
 
   barra.classList.toggle("oculta", !mostrar);
   document.body.classList.toggle("con-barra-sesion", mostrar);
-  if (!mostrar) return;
+  if (!mostrar) {
+    document.documentElement.style.setProperty("--alto-barra-sesion", "0px");
+    return;
+  }
 
   const s = S.sesion;
   const fecha = s?.fecha || abierta.fecha;
@@ -1288,6 +1294,11 @@ function pintarBarraSesion() {
     $("#bs-detalle").textContent = `${RUTINAS[rutinaId]?.nombre || ""} · tocá para seguir`;
   }
   barra.onclick = () => { if (!S.sesion) retomarSesion(fecha); else irA("entreno"); };
+  // Se mide después de pintarla: es lo que el inicio se descuenta de su alto.
+  requestAnimationFrame(() => {
+    document.documentElement.style.setProperty("--alto-barra-sesion",
+      `${barra.offsetHeight}px`);
+  });
 }
 
 /* "Dorsalera, serie 2" — en qué punto exacto quedó la sesión. */
@@ -1725,78 +1736,152 @@ function renderInicio() {
   /* --- Tarjeta de racha --- */
   renderRacha(racha, semanaActual);
 
-  /* --- Tarjeta "Entreno hoy" --- */
+  /* --- Toggle "Entreno hoy": qué día es, si ya está cumplido, y qué viene ---
+     Es informativo: dice en una línea qué toca hoy, si ya lo cumpliste (tilde)
+     y qué toca mañana. La acción vive en el botón grande de abajo. */
   const tEntreno = $("#tarjeta-entreno");
+  const manana = sumarDias(hoy, 1);
+  const planManana = planDelDia(manana);
+  const textoManana = planManana.tipo === "entreno"
+    ? `Mañana toca ${RUTINAS[planManana.rutina].nombre}`
+    : "Mañana descansás";
+  const arengaManana = planManana.tipo === "entreno"
+    ? (plan.tipo === "descanso" ? "Recuperá energía y no me falles."
+      : "Dos seguidos: ahí se nota quién va en serio.")
+    : "Descanso ganado, pero la semana no terminó.";
+
+  let tituloEntreno, valorEntreno, notaEntreno, tildeEntreno = false;
   if (sesionAbierta) {
-    tEntreno.innerHTML = `
-      <div><div class="tarjeta-titulo">Entreno hoy</div>
-      <div class="tarjeta-valor">En curso</div>
-      <div class="tarjeta-nota">Ya cuenta. Tocá para continuar donde estabas.</div></div>
-      <div class="tarjeta-estado">💪</div>`;
-    tEntreno.onclick = () => retomarSesion(hoy);
+    tituloEntreno = "Entreno de hoy";
+    valorEntreno = "En curso";
+    notaEntreno = "Ya cuenta para la racha";
   } else if (entrenado) {
-    tEntreno.innerHTML = `
-      <div><div class="tarjeta-titulo">Entreno hoy</div>
-      <div class="tarjeta-valor">Ya entrenaste hoy</div>
-      <div class="tarjeta-nota">${esc(resumenCortoSesion(reg))}</div></div>
-      <div class="tarjeta-estado">✅</div>`;
-    tEntreno.onclick = () => abrirFicha(hoy, tEntreno);
-  } else if (plan.tipo === "entreno" && estado !== "causa-mayor") {
-    tEntreno.innerHTML = `
-      <div><div class="tarjeta-titulo">Entreno hoy</div>
-      <div class="tarjeta-valor">${esc(rutinaHoy.nombre)}</div>
-      <div class="tarjeta-nota">${hora < horaDe(CONFIG.horaEntreno, 10)
-        ? `Solés ir ${esc(CONFIG.horaEntreno)}` : "Sacate la foto y ya cuenta"}</div></div>
-      <span class="btn btn-rojo btn-medio" style="align-self:stretch;display:flex;align-items:center;justify-content:center">Registrar</span>`;
-    tEntreno.onclick = () => abrirRegistroEntrenamiento();
-  } else if (pendientes.length) {
-    tEntreno.innerHTML = `
-      <div><div class="tarjeta-titulo">Entreno hoy</div>
-      <div class="tarjeta-valor">Recuperar ${esc(RUTINAS[pendientes[0].rutinaId].nombre)}</div>
-      <div class="tarjeta-nota">Hasta el domingo estás a tiempo</div></div>
-      <div class="tarjeta-estado">🔥</div>`;
-    tEntreno.onclick = () => abrirRegistroEntrenamiento({
-      rutinaId: pendientes[0].rutinaId, esRecuperacion: true, fechaOriginal: pendientes[0].fecha,
-    });
+    tituloEntreno = "Entreno de hoy";
+    valorEntreno = plan.tipo === "descanso" ? "Adelantaste una sesión" : "Cumplido";
+    notaEntreno = resumenCortoSesion(reg) || (rutinaHoy ? rutinaHoy.nombre : "");
+    tildeEntreno = true;
+  } else if (estado === "causa-mayor") {
+    tituloEntreno = "Entreno de hoy";
+    valorEntreno = "Causa mayor";
+    notaEntreno = reg?.causaMayor?.motivo || "Día cubierto";
+    tildeEntreno = true;
+  } else if (plan.tipo === "descanso") {
+    tituloEntreno = "Entreno de hoy";
+    valorEntreno = "Es día de descanso";
+    notaEntreno = reg?.caminata?.minutos
+      ? `Caminata de ${reg.caminata.minutos} min`
+      : "Sin caminata todavía";
+    tildeEntreno = !!reg?.caminata?.minutos;
   } else {
-    tEntreno.innerHTML = `
-      <div><div class="tarjeta-titulo">Entreno hoy</div>
-      <div class="tarjeta-valor">${estado === "causa-mayor" ? "Causa mayor" : "Descanso"}</div>
-      <div class="tarjeta-nota">${reg?.caminata?.minutos ? `Caminata: ${reg.caminata.minutos} min` : "¿Sumás una caminata?"}</div></div>
-      ${reg?.caminata?.minutos ? `<div class="tarjeta-estado">✅</div>` : ""}`;
-    tEntreno.onclick = () => hojaCaminata();
+    tituloEntreno = "Entreno de hoy";
+    valorEntreno = rutinaHoy.nombre;
+    notaEntreno = hora < horaDe(CONFIG.horaEntreno, 10)
+      ? `Solés ir ${CONFIG.horaEntreno}` : "Todavía sin hacer";
   }
 
-  /* --- Tarjeta "Agua hoy" --- */
+  tEntreno.innerHTML = `
+    <div class="tg-fila">
+      <div class="tg-datos">
+        <div class="tarjeta-titulo">${esc(tituloEntreno)}</div>
+        <div class="tarjeta-valor">${esc(valorEntreno)}</div>
+      </div>
+      ${tildeEntreno ? `<div class="tarjeta-estado">✅</div>` : ""}
+    </div>
+    <div class="tarjeta-nota">${esc(notaEntreno)}</div>
+    <div class="tg-manana"><b>${esc(textoManana)}.</b> ${esc(arengaManana)}</div>`;
+  tEntreno.onclick = () => {
+    if (sesionAbierta) retomarSesion(hoy);
+    else if (entrenado) abrirFicha(hoy, tEntreno);
+    else if (plan.tipo === "descanso") hojaCaminata();
+    else abrirRegistroEntrenamiento();
+  };
+
+  /* --- Toggle "Agua hoy" --- */
   const regHoy = S.dias.get(hoy);   // el agua vale aunque el día sea de prueba
   const ml = regHoy?.aguaMl || 0;
   const objetivo = S.config.aguaObjetivoMl || 2000;
   const cumplida = ml >= objetivo;
   const tAgua = $("#tarjeta-agua");
   tAgua.innerHTML = `
-    <div><div class="tarjeta-titulo">Agua hoy</div>
-    <div class="tarjeta-valor num">${fmtLitros(ml)} / ${fmtLitros(objetivo)} L</div>
-    <div class="tarjeta-nota">${cumplida ? "Objetivo cumplido" : "Tocá para registrar"}</div></div>
-    <div class="botella-caja">${svgBotella(ml / objetivo, { lleno: cumplida })}</div>`;
+    <div class="tg-fila">
+      <div class="tg-datos">
+        <div class="tarjeta-titulo">Agua de hoy</div>
+        <div class="tarjeta-valor num">${fmtLitros(ml)} / ${fmtLitros(objetivo)} L</div>
+        <div class="tarjeta-nota">${cumplida ? "Objetivo cumplido" : "Tocá para registrar"}</div>
+      </div>
+      <div class="botella-caja">${svgBotella(ml / objetivo, { lleno: cumplida })}</div>
+    </div>`;
   tAgua.onclick = () => hojaAgua(tAgua);
+
+  /* --- Botón grande de acción --- */
+  renderAccionEntreno({ hoy, plan, rutinaHoy, entrenado, sesionAbierta, pendientes, estado });
 
   /* --- Tarjeta de peso --- */
   renderTarjetaPeso();
 
-  /* --- "Hoy no llego" (día de entreno, sin sesión, sin causa mayor) --- */
-  let noLlego = $("#btn-no-llego");
-  if (plan.tipo === "entreno" && !entrenado && !sesionAbierta && estado !== "causa-mayor") {
-    if (!noLlego) {
-      noLlego = el("button", "btn btn-texto", "Hoy no llego →");
-      noLlego.id = "btn-no-llego";
-      noLlego.style.width = "100%";
-      $("#tarjeta-peso").before(noLlego);
-    }
-    noLlego.onclick = () => hojaNoLlego();
-  } else if (noLlego) noLlego.remove();
-
   /* --- Logros --- */
   renderLogros();
+}
+
+/* ==========================================================================
+   BOTÓN DE ACCIÓN DEL INICIO
+   --------------------------------------------------------------------------
+   Verde y cerrado si ya cumplí (con lápiz al margen para corregir), rojo y
+   abierto si falta. Debajo, en gris, las salidas: adelantar o descansar.
+   ========================================================================== */
+function renderAccionEntreno({ hoy, plan, rutinaHoy, entrenado, sesionAbierta, pendientes, estado }) {
+  const zona = $("#accion-entreno");
+  if (!zona) return;
+  const nombreHoy = rutinaHoy ? rutinaHoy.nombre
+    : (pendientes.length ? RUTINAS[pendientes[0].rutinaId].nombre : "descanso");
+
+  if (sesionAbierta) {
+    zona.innerHTML = `<button id="ae-principal" class="btn btn-rojo btn-accion">
+      Continuar entrenamiento · ${esc(nombreHoy)}</button>`;
+    $("#ae-principal").onclick = () => retomarSesion(hoy);
+    return;
+  }
+
+  if (entrenado) {
+    zona.innerHTML = `
+      <div class="accion-cumplida">
+        <button id="ae-principal" class="btn btn-verde btn-accion">
+          ${plan.tipo === "entreno"
+            ? `Hoy toca ${esc(nombreHoy)} y ya lo cumpliste`
+            : "Ya cumpliste con el entrenamiento de hoy"}</button>
+        <button id="ae-editar" class="btn-lapiz" aria-label="Editar el entrenamiento">✏️</button>
+      </div>`;
+    $("#ae-principal").onclick = () => abrirFicha(hoy);
+    $("#ae-editar").onclick = () => hojaDetalleDia(hoy);
+    return;
+  }
+
+  if (estado === "causa-mayor") {
+    zona.innerHTML = `<p class="dato centrado">Día cubierto por causa mayor.</p>`;
+    return;
+  }
+
+  const esDescanso = plan.tipo === "descanso";
+  zona.innerHTML = `
+    <button id="ae-principal" class="btn btn-rojo btn-accion">
+      ${esDescanso ? "Registrar entrenamiento" : `Iniciar entrenamiento · hoy toca ${esc(nombreHoy)}`}</button>
+    <div class="accion-secundarias">
+      ${esDescanso
+        ? `<button id="ae-caminata" class="btn btn-texto">Registrar una caminata</button>`
+        : `<button id="ae-otra" class="btn btn-texto">Adelantar otra sesión</button>
+           <button id="ae-descansar" class="btn btn-texto">Hoy no llego</button>`}
+    </div>`;
+
+  $("#ae-principal").onclick = () => abrirRegistroEntrenamiento(
+    pendientes.length && esDescanso
+      ? { rutinaId: pendientes[0].rutinaId, esRecuperacion: true, fechaOriginal: pendientes[0].fecha }
+      : {});
+  const bOtra = $("#ae-otra");
+  if (bOtra) bOtra.onclick = () => abrirRegistroEntrenamiento({ forzarNueva: true });
+  const bDesc = $("#ae-descansar");
+  if (bDesc) bDesc.onclick = () => hojaNoLlego();
+  const bCam = $("#ae-caminata");
+  if (bCam) bCam.onclick = () => hojaCaminata();
 }
 
 function renderRacha(racha, semanaActual) {
@@ -4185,6 +4270,10 @@ function hojaDetalleDia(fecha) {
   if (plan.tipo === "descanso" && fecha <= hoy && !esFeriado(fecha)) {
     acciones.push(`<button id="dd-caminata" class="btn btn-borde btn-grande">${reg?.caminata ? "Editar" : "Registrar"} caminata</button>`);
   }
+  // Todo lo que se puede marcar se tiene que poder borrar.
+  if (registrado || reg?.rutinaId) {
+    acciones.push(`<button id="dd-borrar" class="btn btn-texto">Eliminar el entrenamiento de este día</button>`);
+  }
 
   // El parte de la semana se consulta desde cualquier día de una semana cerrada.
   if (lunesDe(fecha) < lunesDe(hoy)) {
@@ -4262,18 +4351,82 @@ function hojaDetalleDia(fecha) {
   on("dd-parte", () => hojaCompletarCierre(fecha));
   on("dd-retro", () => hojaRetro(fecha));
   on("dd-caminata", () => hojaCaminata(fecha));
-  on("dd-hecho", async (ev) => {
+  /* Marcar a mano cambia la racha: se confirma antes, y se dice qué implica. */
+  on("dd-hecho", () => {
     const rutinaId = plan.rutina || reg?.rutinaId || "musculacion";
-    const ok = await guardarDia(fecha, {
-      tipo: "entreno", rutinaId, rutinasVersion: RUTINAS_VERSION,
-      estado: "hecha", registradoAMano: true, esPrueba: false,
-      inicio: reg?.inicio || parseISO(fecha).getTime(),
-    }, { queHacia: "el día", boton: ev.currentTarget });
-    if (!ok) return;
-    cerrarHoja(true);
-    await procesarSemanasCerradas();
-    refrescarVistaActual();
-    toast("Día marcado como hecho.", "toast-record");
+    abrirHoja(`
+      <h3>¿Marcar el día como hecho?</h3>
+      <p class="texto-2">${esc(fmtFechaLarga(fecha))} va a contar como
+      ${esc(RUTINAS[rutinaId]?.nombre || rutinaId)} cumplida, sin series ni pesos
+      cargados. Suma para la racha de esa semana.</p>
+      <p class="dato">Si querés dejar los pesos anotados, mejor usá
+      "Cargar los pesos que hice".</p>
+      <div class="hoja-acciones">
+        <button id="mh-si" class="btn btn-primario btn-grande">Sí, marcarlo</button>
+        <button id="mh-no" class="btn btn-borde btn-grande">Cancelar</button>
+      </div>`);
+    $("#mh-no").onclick = () => cerrarHoja(true);
+    $("#mh-si").onclick = async (ev) => {
+      const antes = { ...(S.dias.get(fecha) || {}) };
+      const ok = await guardarDia(fecha, {
+        tipo: "entreno", rutinaId, rutinasVersion: RUTINAS_VERSION,
+        estado: "hecha", registradoAMano: true, esPrueba: false,
+        inicio: reg?.inicio || parseISO(fecha).getTime(),
+      }, { queHacia: "el día", boton: ev.currentTarget });
+      if (!ok) return;
+      cerrarHoja(true);
+      await procesarSemanasCerradas();
+      refrescarVistaActual();
+      ofrecerDeshacer("Día marcado como hecho", async () => {
+        await guardarDia(fecha, {
+          estado: antes.estado ?? null, rutinaId: antes.rutinaId ?? null,
+          registradoAMano: false, inicio: antes.inicio ?? null,
+          tipo: antes.tipo ?? planDelDia(fecha).tipo,
+        }, { queHacia: "el día" });
+        await procesarSemanasCerradas();
+        refrescarVistaActual();
+      });
+    };
+  });
+
+  /* Borrar el entrenamiento de un día. Destructivo: confirma y dice qué borra. */
+  on("dd-borrar", () => {
+    const tieneSeries = Object.values(reg?.series || {})
+      .some((ss) => (ss || []).some((x) => x?.hecha));
+    abrirHoja(`
+      <h3>¿Eliminar el entrenamiento?</h3>
+      <p class="texto-2">Se borra todo lo de ${esc(fmtFechaLarga(fecha))}:
+      ${tieneSeries ? "las series y los pesos, " : ""}la hora de inicio y la foto.
+      El día vuelve a contar como no entrenado y la racha se recalcula.</p>
+      <p class="dato">El agua y el peso corporal de ese día no se tocan.</p>
+      <div class="hoja-acciones">
+        <button id="db-si" class="btn btn-rojo btn-grande">Sí, eliminarlo</button>
+        <button id="db-no" class="btn btn-borde btn-grande">Mejor no</button>
+      </div>`);
+    $("#db-no").onclick = () => cerrarHoja(true);
+    $("#db-si").onclick = async (ev) => {
+      const antes = JSON.parse(JSON.stringify(S.dias.get(fecha) || {}));
+      if (S.sesion?.fecha === fecha) {
+        S.sesion = null; limpiarSesionLocal(); soltarWakeLock(); frenarTickeo();
+      }
+      const ok = await guardarDia(fecha, {
+        estado: null, rutinaId: null, inicio: null, fin: null,
+        series: {}, vueltas: null, esfuerzo: {}, notas: {},
+        hambre: null, cansancio: null, comentario: "",
+        sesion: { abierta: false }, cerradaAutomatica: false, registradoAMano: false,
+        tieneFoto: false, fotoAgregadaEl: null, motivoSinFoto: null,
+        tipo: planDelDia(fecha).tipo,
+      }, { queHacia: "el borrado", boton: ev.currentTarget });
+      if (!ok) return;
+      cerrarHoja(true);
+      await procesarSemanasCerradas();
+      refrescarVistaActual();
+      ofrecerDeshacer("Entrenamiento eliminado", async () => {
+        await guardarDia(fecha, antes, { queHacia: "el entrenamiento" });
+        await procesarSemanasCerradas();
+        refrescarVistaActual();
+      });
+    };
   });
 }
 
