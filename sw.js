@@ -6,7 +6,7 @@
    dispositivos se actualicen.
    ========================================================================== */
 
-const VERSION = "v20";
+const VERSION = "v21";
 const CACHE = `mi-entrenador-${VERSION}`;
 
 const ARCHIVOS = [

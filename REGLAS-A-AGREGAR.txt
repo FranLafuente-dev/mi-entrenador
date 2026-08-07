@@ -1,26 +1,64 @@
-REGLAS DE FIRESTORE — BLOQUE A AGREGAR
-=======================================
+REGLAS DE FIRESTORE — ARCHIVO COMPLETO PARA LAS DOS APPS
+=========================================================
 
-NO reemplaces tus reglas actuales. Este bloque se AGREGA adentro del
-match /databases/{database}/documents que ya existe, sin borrar ni
-modificar nada de lo que hay (las reglas de Mis Finanzas quedan igual).
+IMPORTANTE — LEÉ ESTO PRIMERO
+-----------------------------
+La versión anterior de este archivo traía SOLO el bloque de Mi Entrenador y
+decía "agregalo sin borrar lo que ya tenés". Si en vez de agregarlo pegaste
+solo ese bloque, Mis Finanzas se quedó SIN NINGUNA REGLA que la cubra, y
+Firestore niega por defecto todo lo que no tiene una regla que lo permita.
+Ese es el síntoma de "no se registra nada": la app escribe en la caché local
+del teléfono y en pantalla parece que anduvo, pero el servidor rechaza el
+guardado y el otro teléfono nunca se entera.
 
-Pasos:
-1. Firebase Console → Firestore Database → Rules.
-2. Buscá la línea:  match /databases/{database}/documents {
-3. Pegá el bloque de abajo ADENTRO de esas llaves, al mismo nivel que
-   los otros "match" que ya tenés.
+Para que no vuelva a pasar, acá abajo está el archivo ENTERO, con las dos
+apps adentro. Reemplazá todo el contenido del editor por esto.
+
+RUTAS QUE USA CADA APP
+----------------------
+  Mis Finanzas   →  misfinanzas/{uid}/state/{documento}
+  Mi Entrenador  →  entrenador/{uid}/{lo que cuelgue}
+
+PASOS
+-----
+1. Firebase Console → Firestore Database → pestaña "Rules".
+2. Seleccioná TODO lo que haya en el editor y borralo.
+3. Pegá exactamente el bloque de abajo (desde rules_version hasta la última
+   llave).
 4. Publish.
-5. Abrí Mis Finanzas y cargá un gasto de prueba para confirmar que
-   sigue funcionando.
+5. Probá: cargá un gasto en Mis Finanzas y fijate que el puntito de sincro
+   quede VERDE. Después abrí el otro teléfono y confirmá que aparezca.
 
 ----------------------------------------------------------------------
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // --- Mis Finanzas: cada usuario solo accede a sus propios datos ---
+    match /misfinanzas/{uid}/{documento=**} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
     // --- Mi Entrenador: cada usuario solo accede a sus propios datos ---
     match /entrenador/{uid}/{documento=**} {
       allow read, write: if request.auth != null && request.auth.uid == uid;
     }
+  }
+}
 ----------------------------------------------------------------------
 
-Eso es todo. Un solo bloque: cubre config, dias, pesajes, semanas y las
-subcolecciones media, porque el comodín {documento=**} abarca todo lo
-que cuelga de entrenador/{uid}.
+CÓMO VERIFICAR QUE QUEDÓ BIEN
+-----------------------------
+En el editor de reglas, arriba a la derecha, está el "Rules Playground".
+Probá así:
+
+  Simulation type : create
+  Location        : /misfinanzas/TU_UID/state/data
+  Authenticated   : sí, con ese mismo UID
+
+Tiene que dar "Allow". Repetí con /entrenador/TU_UID/config/app.
+
+Para saber tu UID: Firebase Console → Authentication → pestaña Users. Ojo
+que vas a ver DOS usuarios distintos, uno de email y contraseña (el de Mis
+Finanzas) y otro de Google (el de Mi Entrenador). Cada app usa el suyo, y
+eso está bien: son dos conjuntos de datos separados.

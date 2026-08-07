@@ -494,7 +494,22 @@ function logAuth(msj) {
 
 function iniciarFirebase() {
   logAuth(`arranque · ${esStandalone() ? "instalada" : "navegador"} · ${esIOS() ? "iOS" : "otro"}`);
-  const app = initializeApp(firebaseConfig);
+  /* EL NOMBRE DE LA APP NO ES DECORATIVO. NO LO SAQUES.
+
+     Firebase guarda la sesión con la clave `firebase:authUser:{apiKey}:{app}`
+     y la caché de Firestore en `firestore/{app}/{proyecto}/main`. Las dos
+     claves llevan el NOMBRE de la app de Firebase, que sin este segundo
+     argumento es "[DEFAULT]" para todo el mundo.
+
+     Mis Finanzas vive en el mismo origen (franlafuente-dev.github.io) y usa
+     el mismo proyecto. Cuando las dos se llamaban "[DEFAULT]" compartían esas
+     dos claves: entrar acá con Google PISABA la sesión de email y contraseña
+     de Mis Finanzas, y esa app quedaba leyendo y escribiendo en
+     misfinanzas/{uid-de-Google}/state, que está vacío. De ahí que no
+     registrara nada y que cada teléfono mostrara algo distinto.
+
+     Con nombre propio, cada app tiene su sesión y su caché. */
+  const app = initializeApp(firebaseConfig, "entrenador");
 
   // Persistencia explícita: IndexedDB primero, localStorage de respaldo.
   // Con initializeAuth queda fijada ANTES del primer chequeo de sesión, así no
