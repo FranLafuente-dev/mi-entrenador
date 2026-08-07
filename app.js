@@ -333,38 +333,76 @@ function svgGalon(estado, extra = "") {
    ========================================================================== */
 let contadorInsignias = 0;
 
-function svgInsignia(clase, { ganado = 0, alCompletar = 0, conSemana = 0 } = {}) {
-  const id = `esc${++contadorInsignias}`;
-  const ESCUDO = "M34 3 63 13v29c0 19-12 30-29 39C18 72 5 61 5 42V13z";
-  const ARRIBA = 6, ABAJO = 80;
-  const y = (p) => ABAJO - (ABAJO - ARRIBA) * Math.max(0, Math.min(1, p));
+/* ==========================================================================
+   EL ESCUDO DEL MES
+   --------------------------------------------------------------------------
+   Cuatro galones, uno por cada semana del ciclo, que se van pintando:
+     vacío   → contorno tenue, la semana todavía no se jugó
+     encurso → punteado con el color que va a tener: el premio se ve ANTES
+     verde   → semana completa
+     dorado  → completa + caminata (la mención)
+   Con los cuatro dorados el escudo entero se va a dorado (mes perfecto).
 
-  const yGanado = y(ganado);
-  const yConSemana = y(conSemana);
-  const yFantasma = y(alCompletar);
-  const altoSemana = Math.max(0, yGanado - yConSemana);
+   Arriba, una estrella por cada ciclo cerrado seguido. Se pierden si se rompe
+   la racha, y esa es toda la motivación para no romperla.
 
-  const galon = (yg, cls) =>
-    `<path class="ins-galon ${cls}" d="M14 ${yg + 13} 34 ${yg} 54 ${yg + 13}v9L34 ${yg + 9} 14 ${yg + 22}z"/>`;
+   Todo en SVG: la app tiene que andar sin señal en el gimnasio, así que no
+   hay imágenes externas. El volumen sale de degradados y de una luz alta.
+   ========================================================================== */
+function svgEscudoMes(clase, c) {
+  const id = ++contadorInsignias;
+  const ESCUDO = "M40 6 74 18v33c0 22-14 35-34 45C20 86 6 73 6 51V18z";
+  const dorado = c.todoDorado;
 
+  // Un galón por semana, apilados de arriba hacia abajo.
+  const galon = (y, estado) => {
+    const d = `M17 ${y + 14} 40 ${y} 63 ${y + 14}v10L40 ${y + 10} 17 ${y + 24}z`;
+    if (estado === "vacio")
+      return `<path class="eg-vacio" d="${d}"/>`;
+    if (estado === "encurso")
+      return `<path class="eg-encurso" d="${d}"/>`;
+    return `<path class="eg-lleno" fill="url(#${estado === "dorado" ? "oro" : "verde"}${id})" d="${d}"/>`;
+  };
+
+  /* Las estrellas van FUERA del svg, debajo del escudo: adentro se pisaban
+     con el borde superior, que arranca en la misma altura. */
   return `
-    <svg class="insignia" viewBox="0 0 68 84" aria-hidden="true">
-      <defs><clipPath id="${id}"><path d="${ESCUDO}"/></clipPath></defs>
-      <path class="ins-fondo" d="${ESCUDO}"/>
-      <g clip-path="url(#${id})">
-        <rect class="ins-ganado" x="0" y="${yGanado.toFixed(1)}" width="68" height="${(84 - yGanado).toFixed(1)}"/>
-        ${altoSemana > 0.5 ? `<rect class="ins-semana" x="0" y="${yConSemana.toFixed(1)}"
-          width="68" height="${altoSemana.toFixed(1)}"/>` : ""}
-        ${alCompletar > ganado + 0.01 ? `<line class="ins-fantasma"
-          x1="0" y1="${yFantasma.toFixed(1)}" x2="68" y2="${yFantasma.toFixed(1)}"/>` : ""}
+    <svg class="insignia ${dorado ? "esc-dorado" : ""}" viewBox="0 0 80 100" aria-hidden="true">
+      <defs>
+        <linearGradient id="verde${id}" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#5BE87F"/><stop offset="55%" stop-color="#30D158"/>
+          <stop offset="100%" stop-color="#1B9E3C"/>
+        </linearGradient>
+        <linearGradient id="oro${id}" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#FFF0B8"/><stop offset="35%" stop-color="#F0C24B"/>
+          <stop offset="100%" stop-color="#B8860B"/>
+        </linearGradient>
+        <linearGradient id="cuerpo${id}" x1="0" y1="0" x2="0.3" y2="1">
+          <stop offset="0%" stop-color="currentColor" stop-opacity=".22"/>
+          <stop offset="100%" stop-color="currentColor" stop-opacity=".06"/>
+        </linearGradient>
+        <linearGradient id="brilloG${id}" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stop-color="#fff" stop-opacity="0"/>
+          <stop offset="50%" stop-color="#fff" stop-opacity=".55"/>
+          <stop offset="100%" stop-color="#fff" stop-opacity="0"/>
+        </linearGradient>
+        <clipPath id="rec${id}"><path d="${ESCUDO}"/></clipPath>
+      </defs>
+
+      <path class="esc-cuerpo" fill="url(#cuerpo${id})" d="${ESCUDO}"/>
+
+      <g clip-path="url(#rec${id})">
+        ${galon(24, c.huecos[0])}
+        ${galon(38, c.huecos[1])}
+        ${galon(52, c.huecos[2])}
+        ${galon(66, c.huecos[3])}
+        <rect class="esc-brillo" fill="url(#brilloG${id})" x="-30" y="0" width="26" height="100"/>
       </g>
-      <g clip-path="url(#${id})">
-        ${galon(16, clase === "r-elite" ? "ins-rojo" : "")}
-        ${galon(32, "")}
-        ${galon(48, "")}
-        <rect class="ins-brillo" x="-14" y="0" width="18" height="84"/>
-      </g>
-      <path class="ins-borde" d="${ESCUDO}"/>
+
+      <path class="esc-borde" d="${ESCUDO}"/>
+      <circle class="esc-remache" cx="40" cy="12" r="2"/>
+      <circle class="esc-remache" cx="14" cy="24" r="1.7"/>
+      <circle class="esc-remache" cx="66" cy="24" r="1.7"/>
     </svg>`;
 }
 
@@ -1926,7 +1964,7 @@ function renderInicio() {
   renderTarjetaPeso();
 
   /* --- Logros --- */
-  renderLogros();
+  // Los logros ahora viven dentro de la tarjeta de racha (renderRacha).
 }
 
 /* ==========================================================================
@@ -2030,36 +2068,24 @@ function renderRacha(racha, semanaActual) {
      La de rango lleva marcado, con una línea, hasta dónde llegaría si
      completa esta semana; la de semana es el zoom de ese tramo. */
   const p = progresoDelRango(racha, semanaActual);
-  const barras = p.siguiente ? `
-    <div class="racha-barras">
-      <div class="rb-linea">
-        <span class="rb-etiqueta">Próximo</span>
-        <b class="rb-nombre">${esc(p.siguiente.nombre)}</b>
-        <span class="rb-falta num">${p.faltan === 1 ? "falta 1 semana" : `faltan ${p.faltan} semanas`}</span>
-      </div>
-      <div class="rb-barra">
-        <i class="rb-ganado" style="width:${(p.ganado * 100).toFixed(0)}%"></i>
-        <i class="rb-semana" style="left:${(p.ganado * 100).toFixed(0)}%;width:${((p.conSemana - p.ganado) * 100).toFixed(0)}%"></i>
-        <i class="rb-fantasma" style="left:${(p.alCompletar * 100).toFixed(0)}%"></i>
-      </div>
-      <div class="rb-barra rb-barra-semana">
-        <i class="rb-ganado" style="width:${(p.pctSemana * 100).toFixed(0)}%"></i>
-      </div>
-      <!-- Los galones van en la misma línea que el contador: decían lo mismo
-           que la barra de semana y apilados eran 20 px de más. -->
-      <div class="rb-pie num">
-        <span class="racha-galones">${galones}</span>
-        <span>${semanaActual.sesiones} de ${semanaActual.objetivo}${
-          marca ? ` <span class="racha-marca">${marca.replace(/^· /, "· ")}</span>` : ""}</span>
-      </div>
-    </div>` : `
-    <div class="racha-barras">
-      <div class="rb-linea"><b class="rb-nombre">El rango más alto</b></div>
-      <div class="rb-pie num">
-        <span class="racha-galones">${galones}</span>
-        <span>${semanaActual.sesiones} de ${semanaActual.objetivo}</span>
-      </div>
-    </div>`;
+  const c = estadoCiclo();
+
+  /* Los tres logros suben acá, pegados al rango, en vez de quedar sueltos al
+     final del inicio. Son la lectura del escudo en palabras. */
+  const { menciones, perfectos, hierros } = contarLogros();
+  const chips = [
+    { i: "🏅", n: "Mención", v: menciones },
+    { i: "🔥", n: "Mes perfecto", v: perfectos },
+    { i: "🛡️", n: "Mes de hierro", v: hierros },
+  ].map((x) => `
+    <span class="rl-chip ${x.v ? "rl-ok" : ""}" title="${esc(x.n)}">
+      <span class="rl-ico">${x.i}</span><span class="rl-n num">${x.v}</span>
+    </span>`).join("");
+
+  const proximo = p.siguiente
+    ? `<div class="rb-linea"><span class="rb-etiqueta">Próximo</span><b class="rb-nombre">${esc(p.siguiente.nombre)}</b>
+       <span class="rb-falta num">${p.faltan === 1 ? "falta 1 semana" : `faltan ${p.faltan} semanas`}</span></div>`
+    : `<div class="rb-linea"><b class="rb-nombre">El rango más alto</b></div>`;
 
   const zona = $("#racha-tarjeta");
   zona.innerHTML = `
@@ -2067,10 +2093,24 @@ function renderRacha(racha, semanaActual) {
       <div class="racha-datos">
         <div class="racha-rango">${esc(rango.nombre)}</div>
         <div class="racha-num num">${racha} <small>${racha === 1 ? "semana seguida" : "semanas seguidas"}</small></div>
-        ${barras}
+        <div class="racha-logros">${chips}</div>
+        ${proximo}
+        <div class="racha-premio">${esc(textoLoQueGanas(c))}</div>
+        <div class="rb-pie num">
+          <span class="racha-galones">${galones}</span>
+          <span>${semanaActual.sesiones} de ${semanaActual.objetivo}${
+            marca ? ` <span class="racha-marca">${marca.replace(/^· /, "· ")}</span>` : ""}</span>
+        </div>
         ${falta}${alerta}
       </div>
-      <div class="racha-insignia">${svgInsignia(clase, p)}</div>
+      <div class="racha-insignia">
+        ${svgEscudoMes(clase, c)}
+        ${c.estrellas ? `<div class="esc-estrellas" aria-label="${c.estrellas} meses perfectos seguidos">${
+          "★".repeat(Math.min(c.estrellas, 5))}${c.estrellas > 5 ? `<span class="esc-mas num">+${c.estrellas - 5}</span>` : ""}</div>` : ""}
+        <div class="esc-pie num">${c.estrellas
+          ? `${c.estrellas} ${c.estrellas === 1 ? "mes" : "meses"} seguidos`
+          : `semana ${Math.min(4, c.posicion + 1)} de 4`}</div>
+      </div>
     </button>`;
   // Tocar la tarjeta del rango lleva al calendario.
   zona.querySelector(".racha").onclick = () => irA("calendario");
@@ -2149,6 +2189,89 @@ function contarLogros() {
     } else if (!s.neutra) { corrida = 0; corridaLimpia = 0; }
   }
   return { menciones, perfectos, hierros, corrida };
+}
+
+/* ==========================================================================
+   EL CICLO DE CUATRO SEMANAS — lo que pinta el escudo
+   --------------------------------------------------------------------------
+   El escudo NO es del rango: es del "mes", que acá son cuatro semanas
+   completas seguidas (no el mes del calendario, así un mes de cinco semanas
+   no te hace perder el logro por algo que no depende de vos).
+
+   Cada semana cerrada pinta un galón:
+     verde   → semana completa (las cuatro sesiones)
+     dorado  → completa Y con caminata en día de descanso (la mención)
+   Cuatro dorados = mes perfecto y el escudo entero se va a dorado.
+   Cuatro sin recuperar ni escudo = mes de hierro.
+
+   Cada ciclo cerrado suma una ESTRELLA, y las estrellas se pierden si se
+   rompe la racha: es lo que hay para no querer volver a empezar.
+   ========================================================================== */
+function estadoCiclo() {
+  const { cerradas, semanaActual } = calcularRacha();
+
+  // Se recorre igual que contarLogros para quedarse con la corrida VIVA.
+  let corrida = 0, corridaLimpia = 0, ciclos = 0, ciclosLimpios = 0;
+  let delCiclo = [];
+  for (const s of cerradas) {
+    if (s.completa) {
+      corrida++;
+      corridaLimpia = (s.recuperadas === 0 && !s.escudo) ? corridaLimpia + 1 : 0;
+      delCiclo.push({ dorado: !!s.mencionHonor, limpia: s.recuperadas === 0 && !s.escudo });
+      if (corrida % 4 === 0) {
+        ciclos++;
+        if (corridaLimpia >= 4) ciclosLimpios++;
+        delCiclo = [];                     // arranca un ciclo nuevo
+      }
+    } else if (!s.neutra) {
+      corrida = 0; corridaLimpia = 0; ciclos = 0; ciclosLimpios = 0; delCiclo = [];
+    }
+  }
+
+  // Los cuatro huecos del ciclo en curso.
+  const huecos = Array.from({ length: 4 }, (_, i) => {
+    const g = delCiclo[i];
+    if (g) return g.dorado ? "dorado" : "verde";
+    return i === delCiclo.length ? "encurso" : "vacio";
+  });
+
+  // Qué pasa si cierra la semana que está jugando ahora.
+  const vaCompleta = semanaActual.sesiones >= semanaActual.objetivo && semanaActual.objetivo > 0;
+  const conCaminata = semanaActual.caminatas > 0;
+  const posicion = delCiclo.length;          // 0..3, el hueco que está llenando
+  const cierraCiclo = posicion === 3;
+
+  return {
+    huecos, estrellas: ciclos, hierros: ciclosLimpios,
+    posicion, cierraCiclo, vaCompleta, conCaminata,
+    semanasDelCiclo: delCiclo.length,
+    todoDorado: huecos.every((h) => h === "dorado"),
+    semanaActual,
+  };
+}
+
+/* La línea que contesta "si termino esta semana, ¿qué gano?". Era lo que
+   faltaba: el premio tiene que verse ANTES de tenerlo. */
+function textoLoQueGanas(c) {
+  const s = c.semanaActual;
+  if (s.neutra) return "Semana sin días de entreno: el escudo no se mueve.";
+  const faltan = Math.max(0, s.objetivo - s.sesiones);
+  const ordinal = ["1º", "2º", "3º", "4º"][c.posicion] || "";
+
+  if (!c.vaCompleta) {
+    return `Te ${faltan === 1 ? "falta 1 sesión" : `faltan ${faltan} sesiones`} para pintar el ${ordinal} galón` +
+      (c.conCaminata ? " en dorado." : " en verde. Con una caminata, dorado.");
+  }
+  if (!c.conCaminata) {
+    return `Semana cerrada: ${ordinal} galón en verde. Sumá una caminata y te queda dorado.`;
+  }
+  if (c.cierraCiclo) {
+    return c.huecos.slice(0, 3).every((h) => h === "dorado")
+      ? "¡Cerrás el mes perfecto y el escudo entero se va a dorado!"
+      : "Cerrás el ciclo y sumás una estrella.";
+  }
+  const restan = 4 - (c.posicion + 1);
+  return `${ordinal} galón dorado. Te ${restan === 1 ? "queda 1 semana" : `quedan ${restan} semanas`} para el mes perfecto.`;
 }
 
 /* Los tres logros como tarjetitas: ícono grande, y los que faltan con el

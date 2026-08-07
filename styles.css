@@ -151,11 +151,10 @@ img { max-width: 100%; display: block; }
   grid-template-rows:
     auto                                  /* fecha + engranaje */
     auto                                  /* titular + frase */
-    auto                                  /* racha */
+    auto                                  /* racha (con logros y escudo) */
     auto                                  /* entreno | agua */
     auto                                  /* botón de acción */
-    auto                                  /* peso */
-    auto;                                 /* logros */
+    auto;                                 /* peso */
   align-content: start;
   gap: clamp(8px, 1.4vh, 12px);
   padding:
@@ -235,10 +234,7 @@ img { max-width: 100%; display: block; }
   .vista-inicio .fila-2 .btn-medio { min-height: 40px; font-size: 14px; }
   /* Los logros se compactan, pero no se van */
   .vista-inicio .logro { font-size: 11px; padding: 3px 8px; }
-  .vista-inicio .racha-barras { margin: 0 0 6px; }
-  .vista-inicio .rb-barra { height: 6px; margin-top: 4px; }
-  .vista-inicio .rb-barra-semana { height: 4px; margin-top: 3px; }
-  .vista-inicio .logros-fila { margin-top: 6px; gap: 5px; }
+  .vista-inicio   .vista-inicio   .vista-inicio   .vista-inicio .logros-fila { margin-top: 6px; gap: 5px; }
   .vista-inicio #logros-zona { margin-top: 10px; }
 }
 /* Al límite: la tarjeta de peso se reduce a una sola línea */
@@ -277,11 +273,9 @@ img { max-width: 100%; display: block; }
 
 /* Con el banner de sesión arriba hay 54 px menos: se compacta todavía más.
    Es una situación transitoria, en medio de un entrenamiento. */
-body.con-barra-sesion .vista-inicio .tg-manana,
-body.con-barra-sesion .vista-inicio .racha-alerta,
-body.con-barra-sesion .vista-inicio .racha-falta { display: none; }
-body.con-barra-sesion .vista-inicio .logro-dato,
-body.con-barra-sesion .vista-inicio .rb-pie { display: none; }
+/* Con la sesion abierta ya NO se esconde contenido: el inicio scrollea, asi
+   que todo sigue estando. Solo se compacta un poco lo secundario. */
+body.con-barra-sesion .vista-inicio .tg-manana { display: none; }
 body.con-barra-sesion .vista-inicio .racha-num { margin-bottom: 4px; }
 /* Con la sesión abierta el titular pierde protagonismo: el banner ya dice
    qué estás haciendo. Achicarlo evita que la fila se recorte. */
@@ -470,30 +464,89 @@ body.con-barra-sesion .vista-inicio .fila-2 .tarjeta { min-height: clamp(72px, 1
 
 /* --- La insignia: se pinta con el progreso ---------------------------------
    ganado sólido · esta semana latiendo encima · fantasma marcando el techo. */
-.racha-insignia { flex: none; display: flex; align-items: center; }
-.insignia { width: 62px; height: 78px; display: block; }
-.ins-fondo { fill: currentColor; opacity: .08; }
-.ins-borde { fill: none; stroke: currentColor; stroke-width: 2.5; opacity: .5; }
-.ins-ganado {
-  fill: var(--verde);
-  transition: y 700ms var(--curva-entrada), height 700ms var(--curva-entrada);
+/* --- El escudo del mes ---------------------------------------------------
+   Cuatro galones, uno por semana del ciclo. El volumen sale de degradados y
+   de una luz alta: nada de imágenes, la app tiene que andar sin señal. */
+.racha-insignia {
+  flex: none; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 4px;
 }
-.ins-semana {
-  fill: var(--verde); opacity: .42;
-  animation: ins-late 2.4s ease-in-out infinite;
-  transition: y 700ms var(--curva-entrada), height 700ms var(--curva-entrada);
+.insignia { width: 66px; height: 82px; display: block; }
+
+.esc-cuerpo { stroke: none; }
+.esc-borde {
+  fill: none; stroke: currentColor; stroke-width: 2.4; opacity: .55;
+  stroke-linejoin: round;
 }
-@keyframes ins-late { 50% { opacity: .70; } }
-.ins-fantasma {
-  stroke: currentColor; stroke-width: 1.6; stroke-dasharray: 3 3; opacity: .55;
+.esc-remache { fill: currentColor; opacity: .3; }
+
+/* Semana todavía no jugada: apenas un contorno. */
+.eg-vacio { fill: none; stroke: currentColor; stroke-width: 1.4; opacity: .22; }
+
+/* La que estás jugando: punteada y latiendo. Es el premio antes de tenerlo. */
+.eg-encurso {
+  fill: none; stroke: var(--verde); stroke-width: 1.8;
+  stroke-dasharray: 4 3; opacity: .75;
+  animation: eg-late 2.2s ease-in-out infinite;
 }
-.ins-galon { fill: currentColor; opacity: .92; }
-.ins-brillo { display: none; }
-@media (prefers-reduced-motion: reduce) {
-  .ins-semana { animation: none; opacity: .55; }
+@keyframes eg-late { 50% { opacity: .35; } }
+
+.eg-lleno {
+  stroke: rgba(0,0,0,.28); stroke-width: .6;
+  animation: eg-entra 520ms var(--curva-entrada) both;
+}
+@keyframes eg-entra {
+  from { opacity: 0; transform: translateY(5px) scale(.9); }
+  to   { opacity: 1; transform: none; }
 }
 
-/* --- Las dos barras, debajo del rango -------------------------------------- */
+/* El brillo barre el escudo cuando hay algo dorado que mostrar. */
+.esc-brillo { display: none; }
+.esc-dorado .esc-brillo {
+  display: block;
+  animation: esc-barrido 3.4s ease-in-out infinite;
+}
+@keyframes esc-barrido {
+  0%, 62% { transform: translateX(0); }
+  100%    { transform: translateX(120px); }
+}
+/* Mes perfecto: el escudo entero se enciende. */
+.esc-dorado .esc-borde { stroke: #F0C24B; opacity: .95; stroke-width: 2.8; }
+.esc-dorado .esc-remache { fill: #F0C24B; opacity: .8; }
+.esc-dorado { filter: drop-shadow(0 0 9px rgba(240,194,75,.45)); }
+
+/* Una estrella por mes perfecto seguido. Se pierden si se rompe la racha, y
+   eso es toda la motivación para no romperla. Van debajo del escudo: adentro
+   del svg se pisaban con el borde de arriba. */
+.esc-estrellas {
+  display: flex; align-items: center; gap: 1px;
+  font-size: 11px; color: #F0C24B; line-height: 1;
+  text-shadow: 0 0 5px rgba(240,194,75,.6);
+  animation: eg-entra 600ms var(--curva-entrada) both;
+}
+.esc-mas { font-size: 9px; font-weight: 700; margin-left: 2px; }
+.esc-pie {
+  font-size: 9.5px; font-weight: 700; opacity: .65;
+  letter-spacing: .2px; text-align: center; line-height: 1.1;
+}
+
+/* --- Los tres logros, pegados al rango ----------------------------------- */
+.racha-logros { display: flex; gap: 6px; margin: 6px 0 7px; }
+.rl-chip {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 3px 7px; border-radius: 999px;
+  background-color: rgba(128,128,128,.16);
+  font-size: 11px; font-weight: 700; opacity: .55;
+}
+.rl-chip.rl-ok { opacity: 1; background-color: rgba(240,194,75,.2); }
+.rl-ico { font-size: 12px; line-height: 1; }
+.rl-n { font-variant-numeric: tabular-nums; }
+
+/* La línea que contesta "si cierro la semana, ¿qué gano?". */
+.racha-premio {
+  font-size: 11.5px; line-height: 1.35; margin-top: 5px;
+  opacity: .85; font-weight: 600;
+}
 .racha-barras { margin: 2px 0 8px; }
 .rb-linea { display: flex; align-items: baseline; gap: 6px; }
 .rb-etiqueta {
@@ -506,23 +559,8 @@ body.con-barra-sesion .vista-inicio .fila-2 .tarjeta { min-height: clamp(72px, 1
   position: relative; height: 7px; border-radius: 999px;
   background: currentColor; margin-top: 5px; overflow: hidden;
 }
-.rb-barra > i { position: absolute; top: 0; bottom: 0; display: block; }
 /* El fondo de la barra es el color del texto muy bajado */
 .rb-barra { color: inherit; background-color: currentColor; }
-.racha .rb-barra { background-color: rgba(128,128,128,.28); }
-.rb-ganado {
-  left: 0; border-radius: 999px; background: var(--verde);
-  transition: width 700ms var(--curva-entrada);
-}
-.rb-semana {
-  border-radius: 999px; background: var(--verde); opacity: .45;
-  animation: ins-late 2.4s ease-in-out infinite;
-  transition: left 700ms var(--curva-entrada), width 700ms var(--curva-entrada);
-}
-.rb-fantasma {
-  width: 2px; background: currentColor; opacity: .8; border-radius: 0;
-  transition: left 700ms var(--curva-entrada);
-}
 .rb-barra-semana { height: 5px; margin-top: 4px; opacity: .85; }
 .rb-pie {
   display: flex; align-items: center; gap: 8px;
