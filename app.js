@@ -177,6 +177,17 @@ function fmtNumero(n, tipo = "carga") {
 function fmtKg(n) { return fmtNumero(n, "carga"); }
 function fmtLitros(ml) { return (ml / 1000).toLocaleString("es-AR", { maximumFractionDigits: 1 }); }
 
+/* Vueltas del circuito: se cuentan de a cuartos (un ejercicio de los cuatro),
+   y en pantalla se leen mucho mejor como fracción que como 2,75. */
+const CUARTOS = { 0: "", 0.25: "¼", 0.5: "½", 0.75: "¾" };
+function fmtVueltas(v) {
+  const n = Number(v) || 0;
+  const entero = Math.floor(n);
+  const resto = CUARTOS[Math.round((n - entero) * 4) / 4] ?? "";
+  if (!resto) return String(entero);
+  return entero === 0 ? resto : `${entero}${resto}`;
+}
+
 const movReducido = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /* --- Toasts --- */
@@ -1819,34 +1830,45 @@ function renderInicio() {
       : "Dos seguidos: ahí se nota quién va en serio.")
     : "Descanso ganado, pero la semana no terminó.";
 
-  let tituloEntreno, valorEntreno, notaEntreno, tildeEntreno = false;
+  /* El color de fondo dice el estado de un vistazo, sin leer:
+     verde cumplido · rojo no fui · amarillo día de descanso · azul caminata. */
+  let tituloEntreno, valorEntreno, notaEntreno, tildeEntreno = false, colorEntreno = "";
   if (sesionAbierta) {
     tituloEntreno = "Entreno de hoy";
     valorEntreno = "En curso";
     notaEntreno = "Ya cuenta para la racha";
+    colorEntreno = "tg-verde";
   } else if (entrenado) {
     tituloEntreno = "Entreno de hoy";
     valorEntreno = plan.tipo === "descanso" ? "Adelantaste una sesión" : "Cumplido";
     notaEntreno = resumenCortoSesion(reg) || (rutinaHoy ? rutinaHoy.nombre : "");
     tildeEntreno = true;
+    colorEntreno = "tg-verde";
   } else if (estado === "causa-mayor") {
     tituloEntreno = "Entreno de hoy";
     valorEntreno = "Causa mayor";
     notaEntreno = reg?.causaMayor?.motivo || "Día cubierto";
     tildeEntreno = true;
+    colorEntreno = "tg-amarillo";
   } else if (plan.tipo === "descanso") {
     tituloEntreno = "Entreno de hoy";
     valorEntreno = "Es día de descanso";
-    notaEntreno = reg?.caminata?.minutos
+    const conCaminata = !!reg?.caminata?.minutos;
+    notaEntreno = conCaminata
       ? `Caminata de ${reg.caminata.minutos} min`
       : "Sin caminata todavía";
-    tildeEntreno = !!reg?.caminata?.minutos;
+    tildeEntreno = conCaminata;
+    // Azul solo si la caminata está hecha; si no, sigue siendo día de descanso.
+    colorEntreno = conCaminata ? "tg-azul" : "tg-amarillo";
   } else {
     tituloEntreno = "Entreno de hoy";
     valorEntreno = rutinaHoy.nombre;
     notaEntreno = hora < horaDe(CONFIG.horaEntreno, 10)
       ? `Solés ir ${CONFIG.horaEntreno}` : "Todavía sin hacer";
+    colorEntreno = "tg-rojo";
   }
+  tEntreno.classList.remove("tg-verde", "tg-rojo", "tg-amarillo", "tg-azul");
+  if (colorEntreno) tEntreno.classList.add(colorEntreno);
 
   tEntreno.innerHTML = `
     <div class="tg-fila">
@@ -1911,17 +1933,11 @@ function renderAccionEntreno({ hoy, plan, rutinaHoy, entrenado, sesionAbierta, p
     return;
   }
 
+  /* Ya cumplido: no va ningún cartel. El toggle "Entreno de hoy" ya quedó
+     verde con el tilde y el resumen, y el lápiz para corregir vive adentro de
+     la ficha que se abre al tocarlo. Repetirlo acá era ruido. */
   if (entrenado) {
-    zona.innerHTML = `
-      <div class="accion-cumplida">
-        <button id="ae-principal" class="btn btn-verde btn-accion">
-          ${plan.tipo === "entreno"
-            ? `Hoy toca ${esc(nombreHoy)} y ya lo cumpliste`
-            : "Ya cumpliste con el entrenamiento de hoy"}</button>
-        <button id="ae-editar" class="btn-lapiz" aria-label="Editar el entrenamiento">✏️</button>
-      </div>`;
-    $("#ae-principal").onclick = () => abrirFicha(hoy);
-    $("#ae-editar").onclick = () => hojaDetalleDia(hoy);
+    zona.innerHTML = "";
     return;
   }
 
@@ -2552,8 +2568,9 @@ function agendarCampana(clave, instanteMs) {
     AUDIO.agendadas.delete(clave);
     if (AUDIO.agendadas.size === 0) mantenerAudioVivo(false);
   };
-  try { src.start(ctx.currentTime + faltanSeg); } catch (_) { return false; }
-  AUDIO.agendadas.set(clave, { src, instante: instanteMs });
+  const cuandoCtx = ctx.currentTime + faltanSeg;
+  try { src.start(cuandoCtx); } catch (_) { return false; }
+  AUDIO.agendadas.set(clave, { src, instante: instanteMs, cuandoCtx });
   AUDIO.sonadas.delete(clave);
   mantenerAudioVivo(true);
   return true;
@@ -2571,9 +2588,39 @@ function cancelarCampana(clave) {
   if (AUDIO.agendadas.size === 0) mantenerAudioVivo(false);
 }
 
+/* Suelta el agendado SIN cortar el sonido. Se usa cuando la campana ya
+   arrancó: llamar a cancelarCampana ahí la cortaría a la mitad, porque hace
+   stop() sobre un nodo que en ese momento está sonando. */
+function soltarCampana(clave) {
+  const a = AUDIO.agendadas.get(clave);
+  if (a) {
+    a.src.onended = null;
+    AUDIO.agendadas.delete(clave);
+  }
+  AUDIO.sonadas.delete(clave);
+  if (AUDIO.agendadas.size === 0) mantenerAudioVivo(false);
+}
+
 function campanaYaSono(clave) { return AUDIO.sonadas.has(clave); }
 function campanaEnEspera(clave) {
   return AUDIO.agendadas.has(clave) && AUDIO.ctx?.state === "running";
+}
+
+/* ¿La campana YA EMPEZÓ a sonar?
+
+   `onended` avisa cuando el sonido TERMINÓ, no cuando arrancó. Ese desfasaje
+   era el bug de la campana doble: el respaldo manual se disparaba a los 0,6 s
+   de vencido el timer, cuando la campana estaba sonando pero todavía no había
+   terminado, así que `campanaYaSono` daba falso y se tocaba una segunda vez
+   encima de la primera.
+
+   El reloj del contexto de audio es la prueba de que arrancó: si el contexto
+   corre y `currentTime` ya pasó el instante agendado, el sonido salió. */
+function campanaArranco(clave) {
+  const a = AUDIO.agendadas.get(clave);
+  const ctx = AUDIO.ctx;
+  if (!a || !ctx || ctx.state !== "running" || a.cuandoCtx == null) return false;
+  return ctx.currentTime >= a.cuandoCtx;
 }
 
 /* Al volver a foco: reanudar el reloj de audio y volver a agendar lo que
@@ -2693,12 +2740,15 @@ function tickTimers(alVolver) {
        - si no, se toca ahora. Estando afuera el tick no corre, así que al
          volver esto se ejecuta y suena en el acto lo que venció mientras tanto. */
     if (resta <= 0 && !t.sono) {
-      if (campanaYaSono(clave)) {
+      if (campanaYaSono(clave) || campanaArranco(clave)) {
+        // Sonó (o está sonando ahora mismo): no se toca nada encima, y se
+        // suelta sin stop() para no cortarla si todavía está sonando.
         t.sono = true;
         vibrar("confirmar");
-        cancelarCampana(clave);
+        soltarCampana(clave);
         guardarSesion();
-      } else if (!campanaEnEspera(clave) || resta <= -0.6) {
+      } else if (!campanaEnEspera(clave)) {
+        // El contexto no corre, así que el nodo agendado no va a sonar solo.
         t.sono = true;
         cancelarCampana(clave);
         sonarCampana();
@@ -3903,7 +3953,7 @@ function renderMovilidad(cont) {
   const cal = INTERVALOS.entradaEnCalor;
   const h = (x) => S.sesion.calorHecho[x];
   cont.innerHTML = `
-    <div class="paso-indicador">${esc(cal.nombre)} · 6-7 min</div>
+    <div class="paso-indicador">${esc(cal.nombre)}</div>
     <p class="texto-2">${esc(cal.nota || "")}</p>
     <div class="check-lista mt">
       ${cal.ejercicios.map((e) => `
@@ -3913,8 +3963,6 @@ function renderMovilidad(cont) {
           <span class="check-tilde">${h(e.id) ? "✓" : ""}</span>
         </button>`).join("")}
     </div>
-    ${htmlTimerGrande("Movilidad")}
-    ${!S.sesion.timer ? `<button id="btn-mov-timer" class="btn btn-borde btn-grande">Iniciar ${Math.round(cal.duracionSeg / 60)} min</button>` : ""}
     <div class="entreno-pie">
       <button id="btn-mov-listo" class="btn btn-rojo btn-gigante">Movilidad lista · empezar bloques</button>
     </div>`;
@@ -3925,8 +3973,6 @@ function renderMovilidad(cont) {
       guardarSesion(); renderPasoSesion();
     };
   });
-  const bt = $("#btn-mov-timer");
-  if (bt) bt.onclick = () => ponerTimer(cal.duracionSeg, "Movilidad");
   $("#btn-mov-listo").onclick = () => avanzarPaso();
 }
 
@@ -3956,9 +4002,9 @@ function renderBloqueIntervalo(cont, paso) {
       <div class="vueltas-etiqueta">Vueltas de este bloque</div>
       <div class="vueltas-contador">
         <button class="btn-paso" id="v-menos1" aria-label="Restar una vuelta">−1</button>
-        <button class="btn-paso" id="v-menos" aria-label="Restar media vuelta">−½</button>
-        <span class="vueltas-num" id="vueltas-num" data-valor="${s.vueltas[v] || 0}">${s.vueltas[v] || 0}</span>
-        <button class="btn-paso" id="v-media" aria-label="Sumar media vuelta">+½</button>
+        <button class="btn-paso" id="v-menos" aria-label="Restar un cuarto de vuelta">−¼</button>
+        <span class="vueltas-num" id="vueltas-num" data-valor="${s.vueltas[v] || 0}">${fmtVueltas(s.vueltas[v])}</span>
+        <button class="btn-paso" id="v-media" aria-label="Sumar un cuarto de vuelta">+¼</button>
         <button class="btn-paso" id="v-mas" aria-label="Sumar una vuelta">+1</button>
       </div>`;
   }
@@ -3977,16 +4023,17 @@ function renderBloqueIntervalo(cont, paso) {
   if (!esCinta) {
     const v = paso.vuelta;
     const cambiarV = async (delta) => {
-      s.vueltas[v] = Math.max(0, Math.round(((s.vueltas[v] || 0) + delta) * 2) / 2);
+      // El circuito son 4 ejercicios: cada uno vale un cuarto de vuelta.
+      s.vueltas[v] = Math.max(0, Math.round(((s.vueltas[v] || 0) + delta) * 4) / 4);
       vibrar("leve");
       guardarSesion();
       await guardarDia(s.fecha, { vueltas: s.vueltas });
       const num = $("#vueltas-num");
-      if (num) { num.textContent = s.vueltas[v]; num.dataset.valor = String(s.vueltas[v]); }
+      if (num) { num.textContent = fmtVueltas(s.vueltas[v]); num.dataset.valor = String(s.vueltas[v]); }
     };
     $("#v-menos1").onclick = () => cambiarV(-1);
-    $("#v-menos").onclick = () => cambiarV(-0.5);
-    $("#v-media").onclick = () => cambiarV(0.5);
+    $("#v-menos").onclick = () => cambiarV(-0.25);
+    $("#v-media").onclick = () => cambiarV(0.25);
     $("#v-mas").onclick = () => cambiarV(1);
   }
   const ir = $("#btn-bloque-ir");
@@ -4836,7 +4883,10 @@ function abrirFicha(fecha, desdeEl) {
   abrirHoja(`
     <div class="ficha-cabecera">
       <div class="etiqueta" style="text-transform:capitalize">${fmtFechaLarga(fecha)}</div>
-      <h3 class="titular" style="margin:0">${esc(r.nombre)}</h3>
+      <div class="ficha-titulo-fila">
+        <h3 class="titular" style="margin:0">${esc(r.nombre)}</h3>
+        <button id="fic-lapiz" class="btn-lapiz" aria-label="Editar este entrenamiento">✏️</button>
+      </div>
       <div class="ficha-datos">${datos.map((x) => `<span class="num">${esc(x)}</span>`).join("")}</div>
       ${comparacion ? `<div class="dato mt">${esc(comparacion)}</div>` : ""}
       ${reg.comentario ? `<div class="dato mt">${esc(reg.comentario)}</div>` : ""}
@@ -4860,6 +4910,7 @@ function abrirFicha(fecha, desdeEl) {
     </div>
   `, { desde: desdeEl });
 
+  $("#fic-lapiz").onclick = () => hojaDetalleDia(fecha);
   $("#fic-abrir-correcciones").onclick = (ev) => {
     $("#fic-correcciones").classList.remove("oculta");
     ev.currentTarget.classList.add("oculta");
@@ -5852,6 +5903,35 @@ function buscarActualizacion() {
   if (!registroSW) return;
   registroSW.update().catch(() => { });
 }
+
+/* ==========================================================================
+   ZOOM Y ROTACIÓN — los dos apagados
+   --------------------------------------------------------------------------
+   El `user-scalable=no` del viewport alcanza en Android, pero Safari lo
+   ignora a propósito desde iOS 10. Ahí hay que frenar los gestos a mano:
+   `gesturestart` es el pellizco, y dos toques muy seguidos en el mismo lugar
+   son el doble tap que también hace zoom.
+
+   La rotación se pide por el manifest (`orientation: portrait`, que manda
+   cuando la app está instalada) y además por la API, que solo funciona en
+   pantalla completa. Si el navegador la rechaza no pasa nada: queda el
+   manifest, y con la app instalada —que es como la usa Fran— alcanza.
+   ========================================================================== */
+function bloquearZoomYRotacion() {
+  for (const ev of ["gesturestart", "gesturechange", "gestureend"]) {
+    document.addEventListener(ev, (e) => e.preventDefault(), { passive: false });
+  }
+  // El doble tap y el pellizco se apagan por CSS con `touch-action`, que no
+  // interfiere con los clics. Frenarlos con preventDefault en touchend sería
+  // un error: mataría el segundo toque rápido en cualquier botón, y acá se
+  // marcan series y vueltas a repetición.
+  document.addEventListener("touchmove", (e) => {
+    if (e.touches.length > 1) e.preventDefault();   // pellizco
+  }, { passive: false });
+
+  try { screen.orientation?.lock?.("portrait").catch(() => { }); } catch (_) { }
+}
+bloquearZoomYRotacion();
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", async () => {

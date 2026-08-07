@@ -66,7 +66,9 @@ body, .vista, .tarjeta, .hoja, .tabbar, .racha {
 
 /* --- Base ------------------------------------------------------------------ */
 * { margin: 0; padding: 0; box-sizing: border-box; }
-html { height: 100%; }
+/* pan-x pan-y deja el scroll intacto y apaga el pellizco y el doble tap para
+   hacer zoom. A diferencia de frenar los toques por JS, no rompe los clics. */
+html { height: 100%; touch-action: pan-x pan-y; -webkit-text-size-adjust: 100%; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   background: var(--fondo);
@@ -137,20 +139,25 @@ img { max-width: 100%; display: block; }
    tarjeta de racha, y por último se saca la línea secundaria del peso.
    Nunca se achican por debajo de lo legible la racha, el entreno ni el agua.
    ========================================================================== */
+/* El inicio SCROLLEA como el resto de las vistas.
+   Antes se forzaba a una sola pantalla (height fijo + overflow hidden + una
+   fila 1fr que comprimía la racha). Eso hacía que en pantallas chicas se
+   recortara contenido y que al volver de otra vista, con la barra de sesión
+   cambiando de alto, las filas se recalcularan y algo quedara afuera.
+   Con alto mínimo y filas automáticas cada bloque ocupa lo que necesita. */
 .vista-inicio {
-  height: calc(100dvh - var(--alto-barra-sesion, 0px));
-  min-height: 0;
-  overflow: hidden;
+  min-height: calc(100dvh - var(--alto-barra-sesion, 0px));
   display: grid;
   grid-template-rows:
     auto                                  /* fecha + engranaje */
     auto                                  /* titular + frase */
-    minmax(118px, 1fr)                    /* racha: la fila flexible */
+    auto                                  /* racha */
     auto                                  /* entreno | agua */
     auto                                  /* botón de acción */
     auto                                  /* peso */
     auto;                                 /* logros */
-  gap: clamp(6px, 1.4vh, 12px);
+  align-content: start;
+  gap: clamp(8px, 1.4vh, 12px);
   padding:
     calc(env(safe-area-inset-top, 0px) + clamp(4px, 1.2vh, 12px))
     calc(env(safe-area-inset-right, 0px) + 20px)
@@ -167,7 +174,7 @@ img { max-width: 100%; display: block; }
   width: 22px; height: 22px; fill: none; stroke: currentColor;
   stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
 }
-.inicio-encabezado { min-height: 0; overflow: hidden; }
+.inicio-encabezado { min-height: 0; }
 .vista-inicio .titular { font-size: clamp(24px, 4.2vh, 34px); }
 .vista-inicio .frase { font-size: clamp(13px, 1.9vh, 17px); margin-top: 2px; }
 .vista-inicio .fila-2 { margin-top: 0; gap: clamp(8px, 1.4vh, 12px); }
@@ -175,8 +182,8 @@ img { max-width: 100%; display: block; }
 .vista-inicio .tarjeta { padding: clamp(12px, 2vh, 20px); }
 .vista-inicio .tarjeta-peso { margin-top: 0; }
 .vista-inicio #racha-tarjeta { margin-top: 0; min-height: 0; }
-.vista-inicio .racha { height: 100%; padding: clamp(12px, 2vh, 24px) 20px; }
-.vista-inicio #logros-zona { margin-top: 0; min-height: 0; overflow: hidden; }
+.vista-inicio .racha { padding: clamp(12px, 2vh, 24px) 20px; }
+.vista-inicio #logros-zona { margin-top: 0; }
 .vista-inicio .tarjeta-valor { font-size: clamp(17px, 2.6vh, 22px); }
 .vista-inicio .racha-num { font-size: clamp(24px, 4vh, 34px); margin: 2px 0 clamp(6px, 1.2vh, 12px); }
 .vista-inicio .insignia { width: clamp(52px, 8vh, 68px); height: auto; }
@@ -194,7 +201,7 @@ img { max-width: 100%; display: block; }
 /* En cualquier teléfono, "Falta: jueves, viernes" se pliega: los galones ya
    dicen 2 de 4 y la alerta dice si la racha corre riesgo. En tablet sí entra. */
 @media (max-height: 900px) {
-  .vista-inicio .racha-falta { display: none; }
+  /* con scroll ya no se esconde nada por falta de alto */
   .vista-inicio .racha-num { margin: 2px 0 6px; }
 }
 /* La insignia NUNCA se oculta: se achica lo mínimo y listo. Lo que se pliega
@@ -216,9 +223,9 @@ img { max-width: 100%; display: block; }
   .vista-inicio .tarjeta { padding: 12px 14px; }
   .vista-inicio .fila-2 .tarjeta { min-height: clamp(76px, 9.5vh, 108px); }
   .vista-inicio .tg-manana { font-size: 10.5px; line-height: 1.25; }
-  .vista-inicio .fila-2 .tarjeta-nota { display: none; }
-  .vista-inicio .tarjeta-peso .tarjeta-nota { display: none; }
-  .vista-inicio .racha-extra { display: none; }
+
+
+
   .vista-inicio .racha-semana { font-size: 13px; }
   .vista-inicio .racha-num { margin: 1px 0 6px; }
   .vista-inicio .racha-alerta,
@@ -236,12 +243,12 @@ img { max-width: 100%; display: block; }
 }
 /* Al límite: la tarjeta de peso se reduce a una sola línea */
 @media (max-height: 700px) {
-  .vista-inicio .tarjeta-peso .peso-fila:nth-child(2) { display: none; }
+
   .vista-inicio .racha-rango { font-size: 15px; }
   .vista-inicio .racha-num { font-size: 12px; margin: 0 0 4px; }
   .vista-inicio .racha-galones svg { width: 18px; height: 15px; }
   .vista-inicio .frase { line-height: 1.25; }
-  .vista-inicio .rb-etiqueta { display: none; }
+
   .vista-inicio .rb-pie { font-size: 10px; margin-top: 3px; }
   /* Los espaciados son lo primero que se comprime: seis huecos más chicos y
      menos margen inferior liberan casi 40 px sin tocar ningún contenido. */
@@ -265,7 +272,7 @@ img { max-width: 100%; display: block; }
 /* Pantallas muy bajas: se va la línea de "mañana toca", que es lo único
    informativo puro que queda. */
 @media (max-height: 620px) {
-  .vista-inicio .tg-manana { display: none; }
+
 }
 
 /* Con el banner de sesión arriba hay 54 px menos: se compacta todavía más.
@@ -584,6 +591,21 @@ body.con-barra-sesion .vista-inicio .fila-2 .tarjeta { min-height: clamp(72px, 1
 #logros-zona { margin-top: 16px; }
 
 /* Tarjetitas: ícono grande y, si falta, cuánto falta en números */
+/* --- Toggle "Entreno de hoy": el fondo dice el estado sin leer -------------
+   Tinte suave sobre la tarjeta y un borde izquierdo saturado que da la lectura
+   rápida. El texto sigue usando el color normal, así que el contraste se
+   mantiene en claro y en oscuro. */
+.tarjeta.tg-verde, .tarjeta.tg-rojo,
+.tarjeta.tg-amarillo, .tarjeta.tg-azul { border-left: 4px solid; }
+.tarjeta.tg-verde    { background-color: color-mix(in srgb, var(--verde) 14%, var(--superficie)); border-left-color: var(--verde); }
+.tarjeta.tg-rojo     { background-color: color-mix(in srgb, var(--rojo) 13%, var(--superficie)); border-left-color: var(--rojo); }
+.tarjeta.tg-amarillo { background-color: color-mix(in srgb, var(--amarillo) 16%, var(--superficie)); border-left-color: var(--amarillo); }
+.tarjeta.tg-azul     { background-color: color-mix(in srgb, var(--azul) 14%, var(--superficie)); border-left-color: var(--azul); }
+
+/* El lápiz de la ficha va al lado del nombre de la rutina, no debajo. */
+.ficha-titulo-fila { display: flex; align-items: center; gap: 10px; }
+.ficha-titulo-fila .titular { flex: 1; min-width: 0; }
+
 .logros-fila { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .logro {
   display: flex; align-items: center; gap: 8px; text-align: left;
@@ -752,15 +774,20 @@ body.con-barra-sesion .vista-inicio .fila-2 .tarjeta { min-height: clamp(72px, 1
 .agua-registros li span { color: var(--texto2); }
 
 /* --- Entrenamiento --------------------------------------------------------- */
+/* La pantalla de entrenamiento sigue el tema del sistema como el resto de la
+   app: blanca de día, negra de noche. Antes era negra fija, y de día quedaba
+   como un parche oscuro en el medio de una app clara. */
 .vista-entreno {
-  background-color: #000; color: #F5F5F7;
-  background-image: var(--grano);   /* el negro deja de ser un rectángulo */
+  background-color: var(--fondo); color: var(--texto);
+  background-image: var(--grano);
   /* Sin tirón para recargar: en medio de una sesión no se recarga nada */
   overscroll-behavior: contain;
   padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 84px);
 }
-.vista-entreno .tarjeta, .vista-entreno .btn-borde, .vista-entreno .btn-suave { background: #1C1C1E; border-color: rgba(255,255,255,.12); }
-.vista-entreno .btn-primario { background: #F5F5F7; color: #000; }
+.vista-entreno .tarjeta, .vista-entreno .btn-borde, .vista-entreno .btn-suave {
+  background: var(--superficie); border-color: var(--separador);
+}
+.vista-entreno .btn-primario { background: var(--texto); color: var(--fondo); }
 .entreno-cabecera {
   display: flex; align-items: center; justify-content: space-between;
   padding-bottom: 8px; gap: 8px;
@@ -776,7 +803,7 @@ body.con-barra-sesion .vista-inicio .fila-2 .tarjeta { min-height: clamp(72px, 1
 }
 .ej-img {
   width: 100%; max-height: 32vh; object-fit: contain;
-  border-radius: var(--r-tarjeta); background: #1C1C1E;
+  border-radius: var(--r-tarjeta); background: var(--superficie);
   margin-bottom: 12px;
 }
 .ej-nombre { font-size: 22px; font-weight: 600; letter-spacing: -0.2px; }
@@ -785,7 +812,7 @@ body.con-barra-sesion .vista-inicio .fila-2 .tarjeta { min-height: clamp(72px, 1
 /* La vez pasada y el récord, uno al lado del otro donde se elige el peso */
 .ej-referencias { display: flex; gap: 8px; margin: 12px 0; }
 .ej-ref {
-  flex: 1; background: #1C1C1E; border-radius: var(--r-boton);
+  flex: 1; background: var(--superficie); border-radius: var(--r-boton);
   border: 1px solid transparent; padding: 10px 14px;
 }
 .ej-ref-etiqueta {
@@ -798,14 +825,14 @@ body.con-barra-sesion .vista-inicio .fila-2 .tarjeta { min-height: clamp(72px, 1
 .ej-ref-cerca b, .ej-ref-cerca .ej-ref-etiqueta { color: var(--verde); }
 .ej-nota-guardada {
   background: rgba(255,214,10,.12); border-radius: var(--r-boton);
-  padding: 12px 16px; font-size: 14px; margin: 12px 0; color: #F5F5F7;
+  padding: 12px 16px; font-size: 14px; margin: 12px 0; color: var(--texto);
 }
 
 /* Peso y reps */
 .peso-control { display: flex; align-items: center; justify-content: center; gap: 12px; margin: 16px 0 8px; }
 .btn-paso {
   width: 60px; height: 60px; border-radius: 50%;
-  background: #1C1C1E; font-size: 28px; font-weight: 500;
+  background: var(--superficie); font-size: 28px; font-weight: 500;
   display: flex; align-items: center; justify-content: center;
   transition: transform 120ms ease;
 }
@@ -813,17 +840,17 @@ body.con-barra-sesion .vista-inicio .fila-2 .tarjeta { min-height: clamp(72px, 1
 .peso-input {
   width: 110px; min-height: 60px; text-align: center;
   font-size: 30px; font-weight: 700; letter-spacing: -1px; font-variant-numeric: tabular-nums;
-  border: 1px solid rgba(255,255,255,.12); border-radius: var(--r-boton);
-  background: #1C1C1E; color: #F5F5F7;
+  border: 1px solid var(--separador); border-radius: var(--r-boton);
+  background: var(--superficie); color: var(--texto);
 }
 .peso-unidad { font-size: 14px; color: #98989D; font-weight: 500; }
-.reps-mini { min-width: 40px; min-height: 40px; border-radius: 10px; background: #1C1C1E; }
+.reps-mini { min-width: 40px; min-height: 40px; border-radius: 10px; background: var(--superficie); }
 
 /* Series: el gesto más repetido de la app */
 .series-fila { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 16px 0; }
 .serie-cajita {
   min-height: 64px; border-radius: var(--r-boton);
-  border: 1px solid rgba(255,255,255,.14);
+  border: 1px solid var(--separador);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   font-weight: 700; font-size: 15px; gap: 2px; position: relative;
   font-variant-numeric: tabular-nums;
@@ -844,10 +871,10 @@ body.con-barra-sesion .vista-inicio .fila-2 .tarjeta { min-height: clamp(72px, 1
 @keyframes serie-rebote { 0% { transform: scale(0.9); } 60% { transform: scale(1.04); } 100% { transform: scale(1); } }
 
 /* Temporizadores con anillo */
-.temporizador { text-align: center; padding: 20px 0 16px; margin: 12px 0; background: #1C1C1E; border-radius: var(--r-tarjeta); }
+.temporizador { text-align: center; padding: 20px 0 16px; margin: 12px 0; background: var(--superficie); border-radius: var(--r-tarjeta); }
 .timer-anillo { position: relative; width: 150px; height: 150px; margin: 0 auto; }
 .timer-anillo svg { width: 100%; height: 100%; transform: rotate(-90deg); }
-.timer-anillo .pista { fill: none; stroke: rgba(255,255,255,.12); stroke-width: 6; }
+.timer-anillo .pista { fill: none; stroke: var(--separador); stroke-width: 6; }
 .timer-anillo .valor { fill: none; stroke: var(--rojo); stroke-width: 6; stroke-linecap: round; }
 .timer-num {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
@@ -880,12 +907,12 @@ body.con-barra-sesion .vista-inicio .fila-2 .tarjeta { min-height: clamp(72px, 1
 .check-lista { display: grid; gap: 8px; margin: 12px 0; }
 .check-item {
   display: flex; align-items: center; gap: 12px;
-  border: 1px solid rgba(255,255,255,.14); border-radius: var(--r-boton);
+  border: 1px solid var(--separador); border-radius: var(--r-boton);
   padding: 12px 16px; min-height: 64px; text-align: left; width: 100%;
   transition: transform 120ms ease, background-color var(--t) var(--curva);
 }
 .check-item:active { transform: scale(0.97); }
-.check-item img { width: 52px; height: 52px; object-fit: contain; border-radius: 10px; background: #1C1C1E; }
+.check-item img { width: 52px; height: 52px; object-fit: contain; border-radius: 10px; background: var(--superficie); }
 .check-item .check-nombre { font-weight: 600; font-size: 15px; flex: 1; }
 .check-item .check-detalle { display: block; font-size: 13px; color: #98989D; font-weight: 400; }
 .check-item.hecho { border-color: var(--verde); background: rgba(48,209,88,.12); }
@@ -893,7 +920,7 @@ body.con-barra-sesion .vista-inicio .fila-2 .tarjeta { min-height: clamp(72px, 1
 
 /* Circuito */
 .circuito-grilla { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0; }
-.circuito-ej { border: 1px solid rgba(255,255,255,.14); border-radius: var(--r-boton); padding: 12px; text-align: center; }
+.circuito-ej { border: 1px solid var(--separador); border-radius: var(--r-boton); padding: 12px; text-align: center; }
 .circuito-ej img { height: 68px; margin: 0 auto 8px; object-fit: contain; }
 .circuito-ej .c-nombre { font-size: 13px; font-weight: 600; line-height: 1.2; }
 .circuito-ej .c-detalle { font-size: 12px; color: #98989D; margin-top: 2px; }
@@ -902,7 +929,7 @@ body.con-barra-sesion .vista-inicio .fila-2 .tarjeta { min-height: clamp(72px, 1
 .vueltas-etiqueta { text-align: center; font-size: 13px; color: #98989D; font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; }
 
 /* Cierre de sesión */
-.cierre-resumen { background: #1C1C1E; border-radius: var(--r-tarjeta); padding: 20px; margin: 12px 0; font-size: 15px; line-height: 1.6; }
+.cierre-resumen { background: var(--superficie); border-radius: var(--r-tarjeta); padding: 20px; margin: 12px 0; font-size: 15px; line-height: 1.6; }
 .cierre-resumen strong { font-size: 26px; display: block; letter-spacing: -1px; font-variant-numeric: tabular-nums; }
 .escala-15 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 8px 0 16px; }
 .escala-15 .btn { min-height: 52px; font-weight: 700; }
@@ -914,10 +941,10 @@ body.con-barra-sesion .vista-inicio .fila-2 .tarjeta { min-height: clamp(72px, 1
    seleccionado va al revés para que contraste contra el negro. */
 .vista-entreno .escala-15 .sel,
 .vista-entreno .esfuerzo-botones .sel {
-  background: #F5F5F7; color: #0A0A0B; border-color: #F5F5F7;
+  background: var(--texto); color: var(--fondo); border-color: var(--texto);
 }
 .foto-zona {
-  border: 1px dashed rgba(255,255,255,.25); border-radius: var(--r-tarjeta);
+  border: 1px dashed var(--separador); border-radius: var(--r-tarjeta);
   min-height: 90px; display: flex; align-items: center; justify-content: center;
   color: #98989D; font-weight: 600; margin: 12px 0; overflow: hidden;
 }
