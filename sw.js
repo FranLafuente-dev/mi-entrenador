@@ -6,7 +6,7 @@
    dispositivos se actualicen.
    ========================================================================== */
 
-const VERSION = "v19";
+const VERSION = "v20";
 const CACHE = `mi-entrenador-${VERSION}`;
 
 const ARCHIVOS = [
@@ -59,10 +59,18 @@ self.addEventListener("message", (e) => {
   if (e.data?.tipo === "tomarControl") self.skipWaiting();
 });
 
+/* Al limpiar cachés viejas hay que filtrar por PREFIJO.
+
+   `caches.keys()` devuelve todas las cachés del ORIGEN, no las de esta app, y
+   en franlafuente-dev.github.io también vive Mis Finanzas. Borrar todo lo que
+   no fuera CACHE le borraba la caché a la otra app en cada activación, y la
+   otra hacía lo mismo con esta. */
+const PREFIJO = "mi-entrenador-";
 self.addEventListener("activate", (e) => {
   e.waitUntil(
     caches.keys()
-      .then((claves) => Promise.all(claves.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((claves) => Promise.all(
+        claves.filter((k) => k.startsWith(PREFIJO) && k !== CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
